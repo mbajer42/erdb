@@ -5,9 +5,7 @@ use std::{collections::HashMap, ffi::OsStr};
 
 use anyhow::{Context, Error, Result};
 
-pub type TableId = u16;
-pub type PageId = u32;
-pub const PAGE_SIZE: u16 = 8192;
+use crate::common::{PageNo, TableId, PAGE_SIZE};
 
 /// FileManager takes care of reading and writing pages of tables.
 /// It assumes that all tables are stored inside a single directory, the data directory,
@@ -37,7 +35,7 @@ fn to_table_id(filename: &OsStr) -> Option<TableId> {
 }
 
 /// Opens and returns a File of a table, which can be written and read.
-fn read_table(entry: DirEntry, table_id: u16) -> Result<File> {
+fn read_table(entry: DirEntry, table_id: TableId) -> Result<File> {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -111,8 +109,8 @@ impl FileManager {
             .ok_or_else(|| Error::msg(format!("No data file for table with id {}", table_id)))
     }
 
-    /// Returns the highest page id of a table or None, if the table is empty.
-    pub fn get_last_page_id(&self, table_id: TableId) -> Result<Option<PageId>> {
+    /// Returns the highest page number of a table or None, if the table is empty.
+    pub fn get_last_page_no(&self, table_id: TableId) -> Result<Option<PageNo>> {
         let file = self.get_file(table_id)?;
         let filesize = file
             .metadata()
@@ -122,7 +120,7 @@ impl FileManager {
         if filesize == 0 {
             Ok(None)
         } else {
-            Ok(Some(((filesize / PAGE_SIZE as u64) - 1) as PageId))
+            Ok(Some(((filesize / PAGE_SIZE as u64) - 1) as PageNo))
         }
     }
 
@@ -146,7 +144,7 @@ impl FileManager {
     }
 
     /// Reads the specified page of a table into the buffer.
-    pub fn read_page(&self, table_id: TableId, page_id: PageId, buffer: &mut [u8]) -> Result<()> {
+    pub fn read_page(&self, table_id: TableId, page_id: PageNo, buffer: &mut [u8]) -> Result<()> {
         let file = self.get_file(table_id)?;
         let filesize = file
             .metadata()
@@ -166,7 +164,7 @@ impl FileManager {
     }
 
     /// Writes data to a page of a table.
-    pub fn write_page(&self, table_id: TableId, page_id: PageId, buffer: &[u8]) -> Result<()> {
+    pub fn write_page(&self, table_id: TableId, page_id: PageNo, buffer: &[u8]) -> Result<()> {
         let file = self.get_file(table_id)?;
         let offset = page_id as u64 * PAGE_SIZE as u64;
         file.write_all_at(buffer, offset).with_context(|| {
@@ -201,13 +199,13 @@ mod tests {
         let mut file_manager = FileManager::new(data_dir.path())?;
         file_manager.create_table(1)?;
 
-        assert_eq!(file_manager.get_last_page_id(1)?, None);
+        assert_eq!(file_manager.get_last_page_no(1)?, None);
 
-        let write_buffer = [1u8; PAGE_SIZE as usize];
+        let write_buffer = [1u8; PAGE_SIZE];
         file_manager.write_page(1, 1, &write_buffer)?;
-        assert_eq!(file_manager.get_last_page_id(1)?, Some(1));
+        assert_eq!(file_manager.get_last_page_no(1)?, Some(1));
 
-        let mut read_buffer = [0u8; PAGE_SIZE as usize];
+        let mut read_buffer = [0u8; PAGE_SIZE];
         file_manager.read_page(1, 1, &mut read_buffer)?;
 
         assert_eq!(read_buffer, write_buffer);

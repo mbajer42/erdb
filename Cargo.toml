@@ -9,4 +9,5 @@ edition = "2021"
 anyhow = "1.0.68"
 
 [dev-dependencies]
+rand = { version = "0.8.5", features = ["min_const_gen"] }
 tempfile = "3.3.0"
