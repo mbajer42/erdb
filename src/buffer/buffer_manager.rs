@@ -4,7 +4,7 @@ use std::sync::{atomic::AtomicBool, RwLock};
 use std::sync::{Mutex, MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::common::{PageId, INVALID_PAGE_ID, PAGE_SIZE};
-use crate::storage::FileManager;
+use crate::storage::file_manager::FileManager;
 
 use super::clock_replacer::ClockReplacer;
 use super::PoolPos;
