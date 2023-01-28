@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{atomic::AtomicBool, RwLock};
 use std::sync::{Mutex, MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::common::{PageId, INVALID_PAGE_ID, PAGE_SIZE};
+use crate::common::{PageId, PageNo, TableId, INVALID_PAGE_ID, PAGE_SIZE};
 use crate::storage::file_manager::FileManager;
 
 use super::clock_replacer::ClockReplacer;
@@ -29,8 +29,11 @@ impl<'a> BufferGuard<'a> {
     }
 
     pub fn write(&self) -> RwLockWriteGuard<[u8]> {
-        self.buffer.mark_dirty();
         self.buffer.data().write().unwrap()
+    }
+
+    pub fn mark_dirty(&self) {
+        self.buffer.mark_dirty();
     }
 }
 
@@ -44,7 +47,7 @@ struct Buffer {
     pool_pos: PoolPos,
     page_id: RwLock<PageId>,
     dirty: AtomicBool,
-    data: RwLock<[u8; PAGE_SIZE]>,
+    data: RwLock<[u8; PAGE_SIZE as usize]>,
 }
 
 impl Buffer {
@@ -53,7 +56,7 @@ impl Buffer {
             pool_pos,
             page_id: RwLock::new(INVALID_PAGE_ID),
             dirty: AtomicBool::new(false),
-            data: RwLock::new([0; PAGE_SIZE]),
+            data: RwLock::new([0; PAGE_SIZE as usize]),
         }
     }
 
@@ -88,7 +91,7 @@ pub struct BufferManager {
 }
 
 impl BufferManager {
-    fn new(file_manager: FileManager, pool_size: usize) -> Self {
+    pub fn new(file_manager: FileManager, pool_size: usize) -> Self {
         let clock_replacer = ClockReplacer::new(pool_size);
         let pool = (0..pool_size).map(Buffer::new).collect();
 
@@ -98,6 +101,10 @@ impl BufferManager {
             page_id_to_pool_pos: Mutex::new(HashMap::new()),
             file_manager,
         }
+    }
+
+    pub fn highest_page_no(&self, table_id: TableId) -> Result<PageNo> {
+        self.file_manager.get_highest_page_no(table_id)
     }
 
     pub fn fetch(&self, page_id: PageId) -> Result<Option<BufferGuard>> {
@@ -168,9 +175,9 @@ mod tests {
         let mut file_manager = FileManager::new(data_dir.path())?;
         file_manager.create_table(1)?;
 
-        let page0: [u8; PAGE_SIZE] = rand::random();
-        let page1: [u8; PAGE_SIZE] = rand::random();
-        let page2: [u8; PAGE_SIZE] = rand::random();
+        let page0: [u8; PAGE_SIZE as usize] = rand::random();
+        let page1: [u8; PAGE_SIZE as usize] = rand::random();
+        let page2: [u8; PAGE_SIZE as usize] = rand::random();
 
         file_manager.write_page(1, 0, &page0)?;
         file_manager.write_page(1, 1, &page1)?;

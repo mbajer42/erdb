@@ -1,6 +1,14 @@
-use crate::tuple::{schema::ColumnDefinition, value::Value, Tuple};
+use crate::{
+    common::PAGE_SIZE,
+    storage::common::{PageHeader, TUPLE_SLOT_SIZE},
+    tuple::{schema::ColumnDefinition, value::Value, Tuple},
+};
 
 use super::header::HeapTupleHeader;
+
+// The maximum allowed size of a tuple and its header.
+// There has to be enough space so that the PageHeader and a TupleSlot will fit.
+pub const MAX_TUPLE_SIZE: u16 = PAGE_SIZE - PageHeader::SIZE - TUPLE_SLOT_SIZE;
 
 pub fn parse_heap_tuple<'a>(bytes: &[u8], columns: &'a [ColumnDefinition]) -> Tuple<'a> {
     let header = HeapTupleHeader::from_bytes(bytes, columns.len() as u8);
@@ -18,12 +26,12 @@ pub fn parse_heap_tuple<'a>(bytes: &[u8], columns: &'a [ColumnDefinition]) -> Tu
     Tuple::new(values, columns)
 }
 
-/// Calculates how many bytes a serialized tuple, including its header, would occupy
-pub fn required_free_space(tuple: &Tuple) -> usize {
+/// Calculates how many bytes a serialized tuple, including its header would occupy
+pub fn required_free_space(tuple: &Tuple) -> u16 {
     let header_size = HeapTupleHeader::required_free_space(tuple);
     let data_size: usize = tuple.values().iter().map(|val| val.size()).sum();
 
-    header_size + data_size
+    (header_size + data_size) as u16
 }
 
 pub fn serialize_heap_tuple(buffer: &mut [u8], tuple: &Tuple) {

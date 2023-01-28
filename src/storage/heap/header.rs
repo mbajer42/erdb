@@ -11,6 +11,7 @@ pub(in crate::storage::heap) struct HeapTupleHeader<'a> {
     null_bits_size: u8,
     // if null_bits points to a mutable slice
     mutable: bool,
+    // null bits should only live as long as null_bits pointer is valid
     phantom: PhantomData<&'a [u8]>,
 }
 
