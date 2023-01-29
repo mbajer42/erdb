@@ -87,7 +87,7 @@ pub struct BufferManager {
     pool: Box<[Buffer]>,
     clock_replacer: Mutex<ClockReplacer>,
     page_id_to_pool_pos: Mutex<HashMap<PageId, PoolPos>>,
-    file_manager: FileManager,
+    file_manager: RwLock<FileManager>,
 }
 
 impl BufferManager {
@@ -99,12 +99,48 @@ impl BufferManager {
             pool,
             clock_replacer: Mutex::new(clock_replacer),
             page_id_to_pool_pos: Mutex::new(HashMap::new()),
-            file_manager,
+            file_manager: RwLock::new(file_manager),
         }
     }
 
     pub fn highest_page_no(&self, table_id: TableId) -> Result<PageNo> {
-        self.file_manager.get_highest_page_no(table_id)
+        let file_manager = self.file_manager.read().unwrap();
+        file_manager.get_highest_page_no(table_id)
+    }
+
+    pub fn create_table(&self, table_id: TableId) -> Result<()> {
+        let mut file_manager = self.file_manager.write().unwrap();
+        file_manager.create_table(table_id)
+    }
+
+    pub fn allocate_new_page(
+        &self,
+        table_id: TableId,
+        initial_data: &[u8],
+    ) -> Result<Option<BufferGuard>> {
+        let mut page_id_to_pool_pos = self.page_id_to_pool_pos.lock().unwrap();
+        let mut clock_replacer = self.clock_replacer.lock().unwrap();
+
+        if let Some(free_pool_pos) = clock_replacer.find_free_buffer() {
+            let buffer = &self.pool[free_pool_pos];
+            self.remove_page(&mut page_id_to_pool_pos, buffer)?;
+
+            let file_manager = self.file_manager.read().unwrap();
+            let page_no = file_manager.allocate_new_page(table_id, initial_data)?;
+
+            let mut data = buffer.data().write().unwrap();
+            data[..].copy_from_slice(initial_data);
+
+            let page_id = (table_id, page_no);
+            buffer.change_page(page_id);
+            page_id_to_pool_pos.insert(page_id, free_pool_pos);
+            clock_replacer.pin(free_pool_pos);
+
+            let guard = BufferGuard::new(self, buffer);
+            Ok(Some(guard))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn fetch(&self, page_id: PageId) -> Result<Option<BufferGuard>> {
@@ -121,12 +157,15 @@ impl BufferManager {
         if let Some(free_pool_pos) = clock_replacer.find_free_buffer() {
             let buffer = &self.pool[free_pool_pos];
             self.remove_page(&mut page_id_to_pool_pos, buffer)?;
+
             let mut data = buffer.data().write().unwrap();
-            self.file_manager
-                .read_page(page_id.0, page_id.1, &mut data)?;
+            let file_manager = self.file_manager.read().unwrap();
+            file_manager.read_page(page_id.0, page_id.1, &mut data)?;
+
             buffer.change_page(page_id);
             page_id_to_pool_pos.insert(page_id, free_pool_pos);
             clock_replacer.pin(free_pool_pos);
+
             let guard = BufferGuard::new(self, buffer);
             Ok(Some(guard))
         } else {
@@ -150,7 +189,8 @@ impl BufferManager {
             page_id_to_pool_pos.remove(&page_id);
             if buffer.dirty() {
                 let data = buffer.data().read().unwrap();
-                self.file_manager.write_page(page_id.0, page_id.1, &data)?;
+                let file_manager = self.file_manager.read().unwrap();
+                file_manager.write_page(page_id.0, page_id.1, &data)?;
             }
         }
         Ok(())
@@ -171,65 +211,50 @@ mod tests {
 
     #[test]
     fn basic_binary_data_test() -> Result<()> {
+        let table_id = 42;
         let data_dir = tempdir()?;
-        let mut file_manager = FileManager::new(data_dir.path())?;
-        file_manager.create_table(1)?;
+        let file_manager = FileManager::new(data_dir.path())?;
+        let buffer_manager = BufferManager::new(file_manager, 1);
+        buffer_manager.create_table(1)?;
 
-        let page0: [u8; PAGE_SIZE as usize] = rand::random();
-        let page1: [u8; PAGE_SIZE as usize] = rand::random();
-        let page2: [u8; PAGE_SIZE as usize] = rand::random();
+        let page1 = [1u8; PAGE_SIZE as usize];
+        let page2 = [2u8; PAGE_SIZE as usize];
 
-        file_manager.write_page(1, 0, &page0)?;
-        file_manager.write_page(1, 1, &page1)?;
-        file_manager.write_page(1, 2, &page2)?;
-
-        let buffer_manager = BufferManager::new(file_manager, 2);
-
-        let buffer0 = buffer_manager.fetch((1, 0))?;
-        let buffer1 = buffer_manager.fetch((1, 1))?;
-        let buffer2 = buffer_manager.fetch((1, 2))?;
-
-        assert!(
-            buffer0.is_some(),
-            "A buffer manager with pool size 2 should be able to hold 2 buffers"
-        );
+        let buffer1 = buffer_manager.allocate_new_page(table_id, &page1)?;
         assert!(
             buffer1.is_some(),
-            "A buffer manager with pool size 2 should be able to hold 2 buffers"
+            "A buffer manager with pool size 1 should be able to hold one buffer."
         );
+        let buffer1 = buffer1.unwrap();
+        assert_eq!(buffer1.read().deref(), &page1);
+
+        let buffer2 = buffer_manager.allocate_new_page(table_id, &page2)?;
         assert!(
             buffer2.is_none(),
-            "A buffer manager with pool size 2 should not be able to hold a third buffer"
+            "A buffer manager with pool size 1 should not be able to hold 2 buffers."
         );
-
-        let buffer0 = buffer0.unwrap();
-        let buffer1 = buffer1.unwrap();
-        assert_eq!(
-            page0,
-            buffer0.read().deref(),
-            "Buffer 0 should hold data of page 0"
-        );
-        assert_eq!(
-            page1,
-            buffer1.read().deref(),
-            "Buffer 1 should hold data of page 1"
-        );
-
         drop(buffer1);
         let buffer2 = buffer_manager.fetch((1, 2))?;
         assert!(
             buffer2.is_some(),
-            "After releasing a buffer, it should be possible to load a new page into a buffer"
+            "A buffer manager with pool size 1 should be able to fetch a new page into a buffer, once all other buffers have been unpinned"
         );
-        let buffer1 = buffer_manager.fetch((1, 1))?;
-        assert!(buffer1.is_none(), "After releasing a buffer and loading a new page into a buffer, the previous page should not be in the pool anymore");
-
         let buffer2 = buffer2.unwrap();
-        assert_eq!(
-            page2,
-            buffer2.read().deref(),
-            "Buffer 2 should hold data of page 2"
-        );
+        assert_eq!(buffer2.read().deref(), &page2);
+
+        // Write something, mark it dirty and unpin it. When reading a new page, this page should be flushed to disk.
+        buffer2.write()[0] = 42;
+        buffer2.mark_dirty();
+        drop(buffer2);
+
+        let buffer1 = buffer_manager.fetch((1, 1))?;
+        assert!(buffer1.is_some());
+        drop(buffer1);
+
+        let buffer2 = buffer_manager.fetch((1, 2))?;
+        assert!(buffer2.is_some());
+        let buffer2 = buffer2.unwrap();
+        assert_eq!(buffer2.read()[0], 42);
 
         Ok(())
     }

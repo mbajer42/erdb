@@ -60,6 +60,27 @@ impl Value {
             Value::Null => 0,
         }
     }
+
+    pub fn as_str(&self) -> &str {
+        match &self {
+            Value::String(val) => val,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn as_i32(&self) -> i32 {
+        match self {
+            Value::Integer(val) => *val,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn as_bool(&self) -> bool {
+        match self {
+            Value::Boolean(val) => *val,
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,34 +1,45 @@
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 
 use crate::{
     buffer::buffer_manager::{BufferGuard, BufferManager},
-    common::{PageNo, TableId},
+    common::{PageNo, TableId, INVALID_PAGE_NO, PAGE_SIZE},
     storage::common::{PageHeader, Serialize, TUPLE_SLOT_SIZE},
-    tuple::{schema::ColumnDefinition, Tuple},
+    tuple::{schema::Schema, Tuple},
 };
 
 use anyhow::{Error, Result};
 
+use lazy_static::lazy_static;
+
 use super::tuple::{parse_heap_tuple, required_free_space, serialize_heap_tuple, MAX_TUPLE_SIZE};
 
-pub struct HeapTupleIterator<'a, 'b> {
+lazy_static! {
+    static ref EMPTY_HEAP_PAGE: [u8; PAGE_SIZE as usize] = {
+        let mut data = [0u8; PAGE_SIZE as usize];
+        let empty_header = PageHeader::empty();
+        empty_header.serialize(&mut data);
+        data
+    };
+}
+
+pub struct HeapTupleIterator<'a> {
     curr_page_no: PageNo,
     max_page_no: PageNo,
     curr_slot: u8,
-    table: &'a Table<'b>,
+    table: &'a Table<'a>,
 }
 
-impl<'a, 'b> HeapTupleIterator<'a, 'b> {
-    fn new(max_page_no: PageNo, table: &'a Table<'b>) -> Self {
+impl<'a> HeapTupleIterator<'a> {
+    fn new(max_page_no: PageNo, table: &'a Table<'a>) -> Self {
         Self {
-            curr_page_no: 0,
+            curr_page_no: 1,
             max_page_no,
             curr_slot: 0,
             table,
         }
     }
 
-    fn fetch_next_tuple(&mut self) -> Result<Option<Tuple<'b>>> {
+    fn fetch_next_tuple(&mut self) -> Result<Option<Tuple>> {
         loop {
             if self.curr_page_no > self.max_page_no {
                 return Ok(None);
@@ -42,7 +53,7 @@ impl<'a, 'b> HeapTupleIterator<'a, 'b> {
                 self.curr_slot = 0;
             } else {
                 let (offset, _size) = PageHeader::tuple_slot(&data, self.curr_slot);
-                let tuple = parse_heap_tuple(&(&data)[offset as usize..], self.table.columns);
+                let tuple = parse_heap_tuple(&(&data)[offset as usize..], self.table.schema);
                 self.curr_slot += 1;
 
                 return Ok(Some(tuple));
@@ -51,8 +62,8 @@ impl<'a, 'b> HeapTupleIterator<'a, 'b> {
     }
 }
 
-impl<'a, 'b> std::iter::Iterator for HeapTupleIterator<'a, 'b> {
-    type Item = Result<Tuple<'b>>;
+impl<'a> std::iter::Iterator for HeapTupleIterator<'a> {
+    type Item = Result<Tuple>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.fetch_next_tuple().transpose()
@@ -73,28 +84,37 @@ fn insert_tuple(buffer: &mut [u8], tuple_size: u16, tuple: &Tuple) -> bool {
 pub struct Table<'a> {
     table_id: TableId,
     buffer_manager: &'a BufferManager,
-    columns: &'a [ColumnDefinition],
+    schema: &'a Schema,
 }
 
 impl<'a> Table<'a> {
-    pub fn new(
-        table_id: TableId,
-        buffer_manager: &'a BufferManager,
-        columns: &'a [ColumnDefinition],
-    ) -> Self {
+    pub fn new(table_id: TableId, buffer_manager: &'a BufferManager, schema: &'a Schema) -> Self {
         Self {
             table_id,
             buffer_manager,
-            columns,
+            schema,
         }
     }
 
     fn fetch_page(&self, page_no: PageNo) -> Result<BufferGuard> {
-        let page = self.buffer_manager.fetch((self.table_id, page_no))?;
-        match page {
+        let buffer = self.buffer_manager.fetch((self.table_id, page_no))?;
+        match buffer {
             None => Err(Error::msg(format!(
                 "Could not fetch page {} for table {}. All buffers in buffer manager are pinned.",
                 page_no, self.table_id
+            ))),
+            Some(buffer) => Ok(buffer),
+        }
+    }
+
+    fn allocate_new_page(&self) -> Result<BufferGuard> {
+        let buffer = self
+            .buffer_manager
+            .allocate_new_page(self.table_id, EMPTY_HEAP_PAGE.as_slice())?;
+        match buffer {
+            None => Err(Error::msg(format!(
+                "Could not allocate new page for table {}. All buffers in buffer manager are pinned.",
+                self.table_id
             ))),
             Some(buffer) => Ok(buffer),
         }
@@ -107,15 +127,22 @@ impl<'a> Table<'a> {
                 "Attempted to insert a tuple which would occupy {required_size} bytes."
             )));
         }
-        let mut page_no = self.buffer_manager.highest_page_no(self.table_id)?;
+
+        let page_no = self.buffer_manager.highest_page_no(self.table_id)?;
+        let mut buffer = if page_no == INVALID_PAGE_NO {
+            self.allocate_new_page()?
+        } else {
+            self.fetch_page(page_no)?
+        };
+
         loop {
-            let page = self.fetch_page(page_no)?;
-            let mut data = page.write();
+            let mut data = buffer.write();
             if insert_tuple(data.deref_mut(), required_size, tuple) {
-                page.mark_dirty();
+                buffer.mark_dirty();
                 return Ok(());
             } else {
-                page_no += 1;
+                drop(data);
+                buffer = self.allocate_new_page()?;
             }
         }
     }
@@ -138,7 +165,7 @@ mod tests {
         buffer::buffer_manager::BufferManager,
         storage::file_manager::FileManager,
         tuple::{
-            schema::{ColumnDefinition, TypeId},
+            schema::{ColumnDefinition, Schema, TypeId},
             value::Value,
             Tuple,
         },
@@ -161,14 +188,14 @@ mod tests {
         file_manager.create_table(1)?;
         let buffer_manager = BufferManager::new(file_manager, 1);
 
-        let column_definitions = vec![
+        let schema = Schema::new(vec![
             ColumnDefinition::new(TypeId::Integer, "non_null_integer".to_owned(), 0, true),
             ColumnDefinition::new(TypeId::Text, "non_null_text".to_owned(), 1, true),
             ColumnDefinition::new(TypeId::Boolean, "non_null_boolean".to_owned(), 2, true),
             ColumnDefinition::new(TypeId::Integer, "nullable_integer".to_owned(), 3, true),
-        ];
+        ]);
 
-        let table = Table::new(1, &buffer_manager, &column_definitions);
+        let table = Table::new(1, &buffer_manager, &schema);
 
         let tuples = (0..10)
             .map(|i| {
@@ -182,7 +209,7 @@ mod tests {
                         Value::Integer(rand::random())
                     },
                 ];
-                Tuple::new(values, &column_definitions)
+                Tuple::new(values)
             })
             .collect::<Vec<_>>();
 
@@ -192,6 +219,10 @@ mod tests {
 
         let collected_tuples = table.iter()?.collect::<Vec<_>>();
         assert_eq!(tuples.len(), collected_tuples.len());
+        for tuple in collected_tuples {
+            let tuple = tuple?;
+            assert_eq!(tuple.values().len(), schema.columns().len());
+        }
 
         Ok(())
     }

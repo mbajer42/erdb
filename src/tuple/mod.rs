@@ -1,27 +1,17 @@
-use self::{schema::ColumnDefinition, value::Value};
+use self::value::Value;
 
 pub mod schema;
 pub mod value;
 
-pub struct Tuple<'a> {
+pub struct Tuple {
     values: Vec<Value>,
-    columns: &'a [ColumnDefinition],
     has_null: bool,
 }
 
-impl<'a> Tuple<'a> {
-    pub fn new(values: Vec<Value>, columns: &'a [ColumnDefinition]) -> Self {
-        debug_assert!(
-            values.len() == columns.len(),
-            "Expected values and columns to be of same length"
-        );
-
+impl Tuple {
+    pub fn new(values: Vec<Value>) -> Self {
         let has_null = values.iter().any(|val| val.is_null());
-        Self {
-            values,
-            columns,
-            has_null,
-        }
+        Self { values, has_null }
     }
 
     pub fn has_null(&self) -> bool {
@@ -32,7 +22,15 @@ impl<'a> Tuple<'a> {
         &self.values
     }
 
-    pub fn columns(&self) -> &[ColumnDefinition] {
-        self.columns
+    pub fn as_str(&self, col_idx: usize) -> &str {
+        self.values[col_idx].as_str()
+    }
+
+    pub fn as_i32(&self, col_idx: usize) -> i32 {
+        self.values[col_idx].as_i32()
+    }
+
+    pub fn as_bool(&self, col_idx: usize) -> bool {
+        self.values[col_idx].as_bool()
     }
 }

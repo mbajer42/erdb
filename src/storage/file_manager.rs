@@ -1,5 +1,4 @@
 use std::cell::Cell;
-use std::cmp::Ordering;
 use std::fs::{DirEntry, File, OpenOptions};
 use std::os::unix::prelude::FileExt;
 use std::path::PathBuf;
@@ -7,10 +6,7 @@ use std::{collections::HashMap, ffi::OsStr};
 
 use anyhow::{Context, Error, Result};
 
-use crate::common::{PageNo, TableId, PAGE_SIZE};
-use crate::storage::common::Serialize;
-
-use super::common::PageHeader;
+use crate::common::{PageNo, TableId, INVALID_PAGE_NO, PAGE_SIZE};
 
 /// FileManager takes care of reading and writing pages of tables.
 /// It assumes that all tables are stored inside a single directory, the data directory,
@@ -98,16 +94,29 @@ impl FileManager {
             .with_context(|| format!("Failed to create data file for table {}", table_id))?;
 
         let file = FileHandle::new(table_id, file, 0);
-        file.allocate_new_page()?;
         self.table_id_to_file.insert(table_id, file);
 
         Ok(())
     }
 
+    /// Allocates a new page, writes it with initial data and returns the page number of the freshly allocated page.
+    pub fn allocate_new_page(&self, table_id: TableId, initial_data: &[u8]) -> Result<PageNo> {
+        let file = self.get_file(table_id)?;
+        file.allocate_new_page(initial_data)
+    }
+
     /// Reads the specified page of a table into the buffer.
     pub fn read_page(&self, table_id: TableId, page_no: PageNo, buffer: &mut [u8]) -> Result<()> {
+        if page_no == INVALID_PAGE_NO {
+            return Err(Error::msg(format!("Invalid page number {page_no}")));
+        }
         let file = self.get_file(table_id)?;
-        file.read_page(page_no, buffer)?;
+        let highest_page_no = file.get_highest_page_no();
+        if page_no > highest_page_no {
+            return Err(Error::msg(format!("Attempted to read page number {page_no}, but table has only {highest_page_no} pages.")));
+        }
+        let offset = (page_no - 1) as u64 * PAGE_SIZE as u64;
+        file.read_page_at_offset(offset, buffer)?;
 
         Ok(())
     }
@@ -115,13 +124,13 @@ impl FileManager {
     /// Writes data to an allocated page of a table. Returns an error if the page hasn't been allocated yet.
     pub fn write_page(&self, table_id: TableId, page_no: PageNo, buffer: &[u8]) -> Result<()> {
         let file = self.get_file(table_id)?;
-        let offset = page_no as u64 * PAGE_SIZE as u64;
-        if offset >= file.filesize() {
+        if page_no > file.get_highest_page_no() {
             Err(Error::msg(format!(
                 "Attempted to write page {} for table {} before it has been allocated",
                 page_no, table_id
             )))
         } else {
+            let offset = (page_no - 1) as u64 * PAGE_SIZE as u64;
             file.write_page_at_offset(offset, buffer)
         }
     }
@@ -148,42 +157,23 @@ impl FileHandle {
 
     fn get_highest_page_no(&self) -> PageNo {
         let size = self.filesize.get();
-        ((size / PAGE_SIZE as u64) - 1) as PageNo
+        (size / PAGE_SIZE as u64) as PageNo
     }
 
-    /// Allocates a new page
-    fn allocate_new_page(&self) -> Result<()> {
-        let page_header = PageHeader::empty();
-        let mut buffer = [0u8; PAGE_SIZE as usize];
-        page_header.serialize(&mut buffer);
-        self.write_page_at_offset(self.filesize.get(), &buffer)?;
+    /// Allocates a new page.
+    fn allocate_new_page(&self, initial_data: &[u8]) -> Result<PageNo> {
+        self.write_page_at_offset(self.filesize.get(), initial_data)?;
         let size = self.filesize() + PAGE_SIZE as u64;
         self.filesize.set(size);
-        Ok(())
+        Ok((size / PAGE_SIZE as u64) as PageNo)
     }
 
-    /// Reads page into buffer.
-    /// If the page does not exist yet but is at file boundary, as new page will be allocated,
-    /// else, an error is returned.
-    fn read_page(&self, page_no: PageNo, buffer: &mut [u8]) -> Result<()> {
-        let offset = page_no as u64 * PAGE_SIZE as u64;
-        let filesize = self.filesize.get();
-
-        match offset.cmp(&filesize) {
-            Ordering::Equal => self.allocate_new_page()?,
-            Ordering::Greater => {
-                return Err(Error::msg(format!(
-                    "Attempted to read page {} at offset {} for table {}. But table is of size {}",
-                    page_no, offset, self.table_id, filesize
-                )));
-            }
-            Ordering::Less => (),
-        }
-
+    /// Reads a page into a buffer.
+    fn read_page_at_offset(&self, offset: u64, buffer: &mut [u8]) -> Result<()> {
         self.file.read_exact_at(buffer, offset).with_context(|| {
             format!(
-                "Could not read page {} for table {}",
-                page_no, self.table_id
+                "Could not read page at offset {} for table {}",
+                offset, self.table_id
             )
         })?;
 
@@ -272,13 +262,13 @@ mod tests {
         let page = file_manager.get_highest_page_no(table_id)?;
         assert_eq!(page, 0);
 
-        let write_buffer = [1u8; PAGE_SIZE as usize];
-        file_manager.write_page(table_id, page, &write_buffer)?;
+        let initial_data = [1u8; PAGE_SIZE as usize];
+        let page_no = file_manager.allocate_new_page(table_id, &initial_data)?;
 
         let mut read_buffer = [0u8; PAGE_SIZE as usize];
-        file_manager.read_page(table_id, page, &mut read_buffer)?;
+        file_manager.read_page(table_id, page_no, &mut read_buffer)?;
 
-        assert_eq!(read_buffer, write_buffer);
+        assert_eq!(read_buffer, initial_data);
 
         Ok(())
     }
