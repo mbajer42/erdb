@@ -219,17 +219,17 @@ mod tests {
     use crate::common::PAGE_SIZE;
 
     #[test]
-    fn basic_binary_data_test() -> Result<()> {
+    fn basic_binary_data_test() {
         let table_id = 42;
-        let data_dir = tempdir()?;
-        let file_manager = FileManager::new(data_dir.path())?;
+        let data_dir = tempdir().unwrap();
+        let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
-        buffer_manager.create_table(1)?;
+        buffer_manager.create_table(table_id).unwrap();
 
         let page1 = [1u8; PAGE_SIZE as usize];
         let page2 = [2u8; PAGE_SIZE as usize];
 
-        let buffer1 = buffer_manager.allocate_new_page(table_id, &page1)?;
+        let buffer1 = buffer_manager.allocate_new_page(table_id, &page1).unwrap();
         assert!(
             buffer1.is_some(),
             "A buffer manager with pool size 1 should be able to hold one buffer."
@@ -237,13 +237,13 @@ mod tests {
         let buffer1 = buffer1.unwrap();
         assert_eq!(buffer1.read().deref(), &page1);
 
-        let buffer2 = buffer_manager.allocate_new_page(table_id, &page2)?;
+        let buffer2 = buffer_manager.allocate_new_page(table_id, &page2).unwrap();
         assert!(
             buffer2.is_none(),
             "A buffer manager with pool size 1 should not be able to hold 2 buffers."
         );
         drop(buffer1);
-        let buffer2 = buffer_manager.fetch((1, 2))?;
+        let buffer2 = buffer_manager.allocate_new_page(table_id, &page2).unwrap();
         assert!(
             buffer2.is_some(),
             "A buffer manager with pool size 1 should be able to fetch a new page into a buffer, once all other buffers have been unpinned"
@@ -256,15 +256,13 @@ mod tests {
         buffer2.mark_dirty();
         drop(buffer2);
 
-        let buffer1 = buffer_manager.fetch((1, 1))?;
+        let buffer1 = buffer_manager.fetch((table_id, 1)).unwrap();
         assert!(buffer1.is_some());
         drop(buffer1);
 
-        let buffer2 = buffer_manager.fetch((1, 2))?;
+        let buffer2 = buffer_manager.fetch((table_id, 2)).unwrap();
         assert!(buffer2.is_some());
         let buffer2 = buffer2.unwrap();
         assert_eq!(buffer2.read()[0], 42);
-
-        Ok(())
     }
 }
