@@ -212,7 +212,6 @@ mod tests {
 
     use std::ops::Deref;
 
-    use anyhow::Result;
     use tempfile::tempdir;
 
     use super::{BufferManager, FileManager};

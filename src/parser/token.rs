@@ -46,6 +46,8 @@ pub enum Token {
     RightParen,
     // Semicolon ';'
     Semicolon,
+    // not a token, just end of query
+    End,
 }
 
 struct Tokenizer<'a> {
