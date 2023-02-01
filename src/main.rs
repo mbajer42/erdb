@@ -45,15 +45,16 @@ fn trim_newline(s: &mut String) {
 }
 
 fn handle_client(mut stream: TcpStream, catalog: &RwLock<Catalog>) -> Result<()> {
-    stream.write_all("Welcome to erdb\n".as_bytes())?;
-    stream.write_all("> ".as_bytes())?;
-    stream.flush()?;
+    stream.write_all("Welcome to erdb".as_bytes())?;
 
     let mut reader = BufReader::new(&stream);
     let mut writer = BufWriter::new(&stream);
     let mut line = String::new();
 
     loop {
+        line.clear();
+        writer.write_all("\n> ".as_bytes())?;
+        writer.flush()?;
         reader.read_line(&mut line)?;
 
         if line.as_bytes().is_empty() {
@@ -67,14 +68,30 @@ fn handle_client(mut stream: TcpStream, catalog: &RwLock<Catalog>) -> Result<()>
                 let catalog = catalog.read().unwrap();
                 let tables = catalog.list_tables();
                 writer.write_all(tables.join(" ").as_bytes())?;
+            } else if line.starts_with(".columns") {
+                let split = line.split(' ').collect::<Vec<&str>>();
+                if !split.first().unwrap().eq(&".columns") {
+                    writer.write_all("Unknown command".as_bytes())?;
+                    continue;
+                }
+                if split.len() != 2 || split.get(1).unwrap().is_empty() {
+                    writer.write_all("Expected a single table name".as_bytes())?;
+                    continue;
+                }
+                let table_name = split.get(1).unwrap();
+                let catalog = catalog.read().unwrap();
+                match catalog.get_schema(table_name) {
+                    Some(schema) => {
+                        for column in schema.columns() {
+                            writer.write_all(format!("{:?}\n", column).as_bytes())?;
+                        }
+                    }
+                    None => writer.write_all("Could not find table".as_bytes())?,
+                }
             } else {
                 writer.write_all(format!("Unknown command: {line}").as_bytes())?;
             }
         }
-
-        line.clear();
-        writer.write_all("\n> ".as_bytes())?;
-        writer.flush()?;
     }
 
     stream.shutdown(Shutdown::Both)?;
