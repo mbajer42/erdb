@@ -1,6 +1,7 @@
 mod buffer;
 mod catalog;
 mod common;
+mod parser;
 mod storage;
 mod tuple;
 
