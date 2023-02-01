@@ -1,10 +1,12 @@
-use std::cell::Cell;
+use std::ffi::OsStr;
 use std::fs::{DirEntry, File, OpenOptions};
 use std::os::unix::prelude::FileExt;
 use std::path::PathBuf;
-use std::{collections::HashMap, ffi::OsStr};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Error, Result};
+use dashmap::mapref::one::Ref;
+use dashmap::DashMap;
 
 use crate::common::{PageNo, TableId, INVALID_PAGE_NO, PAGE_SIZE};
 
@@ -13,7 +15,7 @@ use crate::common::{PageNo, TableId, INVALID_PAGE_NO, PAGE_SIZE};
 /// where each table is represented as a single file, with the table id used as the filename.
 pub struct FileManager {
     data_directory: PathBuf,
-    table_id_to_file: HashMap<TableId, FileHandle>,
+    table_id_to_file: DashMap<TableId, FileHandle>,
 }
 
 impl FileManager {
@@ -31,7 +33,7 @@ impl FileManager {
             )));
         }
 
-        let mut table_id_to_file = HashMap::new();
+        let table_id_to_file = DashMap::new();
         let content = data_directory.read_dir().with_context(|| {
             format!(
                 "Could not read files in data directory {}",
@@ -46,7 +48,7 @@ impl FileManager {
                     data_directory.display()
                 )
             })?;
-            if entry.file_type()?.is_file() {
+            if !entry.file_type()?.is_file() {
                 continue;
             }
             let table_id = to_table_id(&entry.file_name());
@@ -63,7 +65,7 @@ impl FileManager {
     }
 
     /// Returns the FileHandle object of a table.
-    fn get_file(&self, table_id: TableId) -> Result<&FileHandle> {
+    fn get_file(&self, table_id: TableId) -> Result<Ref<TableId, FileHandle>> {
         self.table_id_to_file
             .get(&table_id)
             .ok_or_else(|| Error::msg(format!("No data file for table with id {}", table_id)))
@@ -78,7 +80,7 @@ impl FileManager {
 
     /// Creates a new table and initializes a first page.
     /// Returns an error if the table already exists or if the initila page could not be initialized.
-    pub fn create_table(&mut self, table_id: TableId) -> Result<()> {
+    pub fn create_table(&self, table_id: TableId) -> Result<()> {
         if self.table_id_to_file.contains_key(&table_id) {
             return Err(Error::msg(format!(
                 "Table with id {} already exists",
@@ -139,7 +141,7 @@ impl FileManager {
 struct FileHandle {
     table_id: TableId,
     file: File,
-    filesize: Cell<u64>,
+    filesize: AtomicU64,
 }
 
 impl FileHandle {
@@ -147,25 +149,24 @@ impl FileHandle {
         Self {
             table_id,
             file,
-            filesize: Cell::new(filesize),
+            filesize: AtomicU64::new(filesize),
         }
     }
 
     fn filesize(&self) -> u64 {
-        self.filesize.get()
+        self.filesize.load(Ordering::Relaxed)
     }
 
     fn get_highest_page_no(&self) -> PageNo {
-        let size = self.filesize.get();
+        let size = self.filesize();
         (size / PAGE_SIZE as u64) as PageNo
     }
 
     /// Allocates a new page.
     fn allocate_new_page(&self, initial_data: &[u8]) -> Result<PageNo> {
-        self.write_page_at_offset(self.filesize.get(), initial_data)?;
-        let size = self.filesize() + PAGE_SIZE as u64;
-        self.filesize.set(size);
-        Ok((size / PAGE_SIZE as u64) as PageNo)
+        let offset = self.filesize.fetch_add(PAGE_SIZE as u64, Ordering::Relaxed);
+        self.write_page_at_offset(offset, initial_data)?;
+        Ok((offset / PAGE_SIZE as u64) as PageNo + 1)
     }
 
     /// Reads a page into a buffer.
@@ -255,7 +256,7 @@ mod tests {
     #[test]
     fn basic_test() -> Result<()> {
         let data_dir = tempdir()?;
-        let mut file_manager = FileManager::new(data_dir.path())?;
+        let file_manager = FileManager::new(data_dir.path())?;
         let table_id = 1;
         file_manager.create_table(table_id)?;
 

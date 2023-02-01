@@ -87,7 +87,7 @@ pub struct BufferManager {
     pool: Box<[Buffer]>,
     clock_replacer: Mutex<ClockReplacer>,
     page_id_to_pool_pos: Mutex<HashMap<PageId, PoolPos>>,
-    file_manager: RwLock<FileManager>,
+    file_manager: FileManager,
 }
 
 impl BufferManager {
@@ -99,18 +99,16 @@ impl BufferManager {
             pool,
             clock_replacer: Mutex::new(clock_replacer),
             page_id_to_pool_pos: Mutex::new(HashMap::new()),
-            file_manager: RwLock::new(file_manager),
+            file_manager,
         }
     }
 
     pub fn highest_page_no(&self, table_id: TableId) -> Result<PageNo> {
-        let file_manager = self.file_manager.read().unwrap();
-        file_manager.get_highest_page_no(table_id)
+        self.file_manager.get_highest_page_no(table_id)
     }
 
     pub fn create_table(&self, table_id: TableId) -> Result<()> {
-        let mut file_manager = self.file_manager.write().unwrap();
-        file_manager.create_table(table_id)
+        self.file_manager.create_table(table_id)
     }
 
     pub fn allocate_new_page(
@@ -125,8 +123,9 @@ impl BufferManager {
             let buffer = &self.pool[free_pool_pos];
             self.remove_page(&mut page_id_to_pool_pos, buffer)?;
 
-            let file_manager = self.file_manager.read().unwrap();
-            let page_no = file_manager.allocate_new_page(table_id, initial_data)?;
+            let page_no = self
+                .file_manager
+                .allocate_new_page(table_id, initial_data)?;
 
             let mut data = buffer.data().write().unwrap();
             data[..].copy_from_slice(initial_data);
@@ -159,8 +158,8 @@ impl BufferManager {
             self.remove_page(&mut page_id_to_pool_pos, buffer)?;
 
             let mut data = buffer.data().write().unwrap();
-            let file_manager = self.file_manager.read().unwrap();
-            file_manager.read_page(page_id.0, page_id.1, &mut data)?;
+            self.file_manager
+                .read_page(page_id.0, page_id.1, &mut data)?;
 
             buffer.change_page(page_id);
             page_id_to_pool_pos.insert(page_id, free_pool_pos);
@@ -187,11 +186,24 @@ impl BufferManager {
         let page_id = buffer.page_id();
         if page_id != INVALID_PAGE_ID {
             page_id_to_pool_pos.remove(&page_id);
-            if buffer.dirty() {
-                let data = buffer.data().read().unwrap();
-                let file_manager = self.file_manager.read().unwrap();
-                file_manager.write_page(page_id.0, page_id.1, &data)?;
-            }
+            self.flush_buffer(buffer)?;
+        }
+        Ok(())
+    }
+
+    pub fn flush_all_buffers(&self) -> Result<()> {
+        for buffer in self.pool.iter() {
+            self.flush_buffer(buffer)?;
+        }
+        Ok(())
+    }
+
+    /// Flushes a buffer to disk if it's dirty
+    fn flush_buffer(&self, buffer: &Buffer) -> Result<()> {
+        if buffer.dirty() {
+            let page_id = buffer.page_id();
+            let data = buffer.data().read().unwrap();
+            self.file_manager.write_page(page_id.0, page_id.1, &data)?;
         }
         Ok(())
     }

@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn basic_test() -> Result<()> {
         let data_dir = tempdir()?;
-        let mut file_manager = FileManager::new(data_dir.path())?;
+        let file_manager = FileManager::new(data_dir.path())?;
         file_manager.create_table(1)?;
         let buffer_manager = BufferManager::new(file_manager, 1);
 

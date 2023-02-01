@@ -36,7 +36,7 @@ lazy_static! {
     ]);
 }
 
-struct Catalog<'a> {
+pub struct Catalog<'a> {
     buffer_manager: &'a BufferManager,
     next_table_id: u16,
     tables_table: Table<'a>,
@@ -91,7 +91,13 @@ impl<'a> Catalog<'a> {
         self.persist_columns(CATALOG_TABLES_TABLE_ID, CATALOG_TABLES_SCHEMA.columns())?;
         self.persist_columns(CATALOG_COLUMNS_TABLE_ID, CATALOG_COLUMNS_SCHEMA.columns())?;
 
+        self.buffer_manager.flush_all_buffers()?;
+
         Ok(())
+    }
+
+    pub fn list_tables(&self) -> Vec<&str> {
+        self.table_name_to_id.keys().map(|s| s.as_str()).collect()
     }
 
     fn load_tables(&mut self) -> Result<()> {
