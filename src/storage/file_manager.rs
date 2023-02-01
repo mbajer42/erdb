@@ -247,11 +247,10 @@ fn read_table(entry: DirEntry, table_id: TableId) -> Result<FileHandle> {
 #[cfg(test)]
 mod tests {
 
-    use super::FileManager;
-    use super::PAGE_SIZE;
-
     use anyhow::Result;
     use tempfile::tempdir;
+
+    use super::{FileManager, PAGE_SIZE};
 
     #[test]
     fn basic_test() -> Result<()> {

@@ -1,8 +1,9 @@
-use std::{fmt::Display, str::FromStr};
-
-use super::Tuple;
+use std::fmt::Display;
+use std::str::FromStr;
 
 use anyhow::Error;
+
+use super::Tuple;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TypeId {

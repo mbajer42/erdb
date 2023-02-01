@@ -85,9 +85,8 @@ impl Value {
 
 #[cfg(test)]
 mod tests {
-    use crate::tuple::schema::{ColumnDefinition, TypeId};
-
     use super::Value;
+    use crate::tuple::schema::{ColumnDefinition, TypeId};
 
     fn serialize_parse_test_helper(buffer: &mut [u8], col: ColumnDefinition, value: Value) {
         value.serialize_value(buffer);

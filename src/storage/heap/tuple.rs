@@ -1,10 +1,9 @@
-use crate::{
-    common::PAGE_SIZE,
-    storage::common::{PageHeader, TUPLE_SLOT_SIZE},
-    tuple::{schema::Schema, value::Value, Tuple},
-};
-
 use super::header::HeapTupleHeader;
+use crate::common::PAGE_SIZE;
+use crate::storage::common::{PageHeader, TUPLE_SLOT_SIZE};
+use crate::tuple::schema::Schema;
+use crate::tuple::value::Value;
+use crate::tuple::Tuple;
 
 // The maximum allowed size of a tuple and its header.
 // There has to be enough space so that the PageHeader and a TupleSlot will fit.
@@ -51,15 +50,12 @@ pub fn serialize_heap_tuple(buffer: &mut [u8], tuple: &Tuple) {
 #[cfg(test)]
 mod tests {
 
-    use crate::tuple::{
-        schema::{ColumnDefinition, Schema, TypeId},
-        value::Value,
-        Tuple,
-    };
-
     use lazy_static::lazy_static;
 
     use super::{parse_heap_tuple, serialize_heap_tuple};
+    use crate::tuple::schema::{ColumnDefinition, Schema, TypeId};
+    use crate::tuple::value::Value;
+    use crate::tuple::Tuple;
 
     lazy_static! {
         static ref TEST_SCHEMA: Schema = Schema::new(vec![

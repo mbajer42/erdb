@@ -1,15 +1,13 @@
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
-use std::sync::{atomic::AtomicBool, RwLock};
-use std::sync::{Mutex, MutexGuard, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::common::{PageId, PageNo, TableId, INVALID_PAGE_ID, PAGE_SIZE};
-use crate::storage::file_manager::FileManager;
+use anyhow::Result;
 
 use super::clock_replacer::ClockReplacer;
 use super::PoolPos;
-
-use anyhow::Result;
+use crate::common::{PageId, PageNo, TableId, INVALID_PAGE_ID, PAGE_SIZE};
+use crate::storage::file_manager::FileManager;
 
 pub struct BufferGuard<'a> {
     buffer_manager: &'a BufferManager,
@@ -214,12 +212,11 @@ mod tests {
 
     use std::ops::Deref;
 
-    use crate::common::PAGE_SIZE;
-
-    use super::{BufferManager, FileManager};
-
     use anyhow::Result;
     use tempfile::tempdir;
+
+    use super::{BufferManager, FileManager};
+    use crate::common::PAGE_SIZE;
 
     #[test]
     fn basic_binary_data_test() -> Result<()> {

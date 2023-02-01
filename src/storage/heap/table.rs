@@ -1,17 +1,14 @@
 use std::ops::DerefMut;
 
-use crate::{
-    buffer::buffer_manager::{BufferGuard, BufferManager},
-    common::{PageNo, TableId, INVALID_PAGE_NO, PAGE_SIZE},
-    storage::common::{PageHeader, Serialize, TUPLE_SLOT_SIZE},
-    tuple::{schema::Schema, Tuple},
-};
-
 use anyhow::{Error, Result};
-
 use lazy_static::lazy_static;
 
 use super::tuple::{parse_heap_tuple, required_free_space, serialize_heap_tuple, MAX_TUPLE_SIZE};
+use crate::buffer::buffer_manager::{BufferGuard, BufferManager};
+use crate::common::{PageNo, TableId, INVALID_PAGE_NO, PAGE_SIZE};
+use crate::storage::common::{PageHeader, Serialize, TUPLE_SLOT_SIZE};
+use crate::tuple::schema::Schema;
+use crate::tuple::Tuple;
 
 lazy_static! {
     static ref EMPTY_HEAP_PAGE: [u8; PAGE_SIZE as usize] = {
@@ -155,25 +152,17 @@ impl<'a> Table<'a> {
 
 #[cfg(test)]
 mod tests {
-    use rand::{
-        distributions::{Alphanumeric, DistString},
-        Rng,
-    };
+    use anyhow::Result;
+    use rand::distributions::{Alphanumeric, DistString};
+    use rand::Rng;
     use tempfile::tempdir;
 
-    use crate::{
-        buffer::buffer_manager::BufferManager,
-        storage::file_manager::FileManager,
-        tuple::{
-            schema::{ColumnDefinition, Schema, TypeId},
-            value::Value,
-            Tuple,
-        },
-    };
-
-    use anyhow::Result;
-
     use super::Table;
+    use crate::buffer::buffer_manager::BufferManager;
+    use crate::storage::file_manager::FileManager;
+    use crate::tuple::schema::{ColumnDefinition, Schema, TypeId};
+    use crate::tuple::value::Value;
+    use crate::tuple::Tuple;
 
     fn random_string() -> String {
         let mut rng = rand::thread_rng();

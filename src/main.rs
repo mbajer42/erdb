@@ -4,12 +4,10 @@ mod common;
 mod storage;
 mod tuple;
 
-use std::{
-    io::{BufRead, BufReader, BufWriter, Write},
-    net::{Shutdown, TcpListener, TcpStream},
-    sync::RwLock,
-    thread,
-};
+use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
+use std::sync::RwLock;
+use std::thread;
 
 use anyhow::{Context, Result};
 use buffer::buffer_manager::BufferManager;

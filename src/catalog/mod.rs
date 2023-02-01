@@ -1,19 +1,14 @@
 use std::collections::{hash_map, HashMap};
 
+use anyhow::{Error, Result};
 use lazy_static::lazy_static;
 
-use crate::{
-    buffer::buffer_manager::BufferManager,
-    common::TableId,
-    storage::heap::table::Table,
-    tuple::{
-        schema::{ColumnDefinition, Schema, TypeId},
-        value::Value,
-        Tuple,
-    },
-};
-
-use anyhow::{Error, Result};
+use crate::buffer::buffer_manager::BufferManager;
+use crate::common::TableId;
+use crate::storage::heap::table::Table;
+use crate::tuple::schema::{ColumnDefinition, Schema, TypeId};
+use crate::tuple::value::Value;
+use crate::tuple::Tuple;
 
 const USER_DATA_TABLE_ID_START: TableId = 10;
 const CATALOG_TABLES_TABLE_ID: TableId = 1;
@@ -193,18 +188,14 @@ impl<'a> Catalog<'a> {
 #[cfg(test)]
 mod tests {
 
+    use anyhow::Result;
     use tempfile::tempdir;
 
-    use crate::{
-        buffer::buffer_manager::BufferManager,
-        catalog::{CATALOG_COLUMNS_NAME, CATALOG_COLUMNS_SCHEMA, CATALOG_TABLES_NAME},
-        storage::file_manager::FileManager,
-        tuple::schema::{ColumnDefinition, Schema, TypeId},
-    };
-
     use super::{Catalog, CATALOG_TABLES_SCHEMA};
-
-    use anyhow::Result;
+    use crate::buffer::buffer_manager::BufferManager;
+    use crate::catalog::{CATALOG_COLUMNS_NAME, CATALOG_COLUMNS_SCHEMA, CATALOG_TABLES_NAME};
+    use crate::storage::file_manager::FileManager;
+    use crate::tuple::schema::{ColumnDefinition, Schema, TypeId};
 
     #[test]
     fn can_create_system_tables() -> Result<()> {
