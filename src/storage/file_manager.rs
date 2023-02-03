@@ -232,9 +232,7 @@ fn read_table(entry: DirEntry, table_id: TableId) -> Result<FileHandle> {
         .with_context(|| format!("Could not read size of table {}", table_id))?
         .len();
 
-    if size == 0 {
-        return Err(Error::msg(format!("Table {} is empty.", table_id)));
-    } else if size % PAGE_SIZE as u64 != 0 {
+    if size % PAGE_SIZE as u64 != 0 {
         return Err(Error::msg(format!(
             "Boundary check for table {} failed. {} is not divisable by page size {}",
             table_id, size, PAGE_SIZE

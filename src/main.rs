@@ -13,7 +13,9 @@ use std::thread;
 use anyhow::{Context, Result};
 use buffer::buffer_manager::BufferManager;
 use catalog::Catalog;
-use clap::Parser;
+use clap::{Arg, Command, Parser};
+use parser::ast::Statement;
+use parser::parse_sql;
 use storage::file_manager::FileManager;
 
 #[derive(Parser)]
@@ -34,52 +36,54 @@ struct ServerConfig {
     pool_size: usize,
 }
 
-fn trim_newline(s: &mut String) {
-    let len = s.len();
-    if s.ends_with("\r\n") {
-        s.truncate(len - 2);
-    } else if s.ends_with('\n') {
-        s.truncate(len - 1);
-    }
+fn metacommand() -> Command {
+    Command::new("erdb")
+        .subcommand_required(true)
+        .disable_help_flag(true)
+        .disable_help_subcommand(true)
+        .help_template("{all-args}")
+        .multicall(true)
+        .subcommand(Command::new(".tables").about("Prints all existing tables"))
+        .subcommand(
+            Command::new(".columns")
+                .arg(Arg::new("table_name").required(true))
+                .about("Prints all columns of a table"),
+        )
+        .subcommand(Command::new(".exit").about("Closes the connection"))
 }
 
-fn handle_client(mut stream: TcpStream, catalog: &RwLock<Catalog>) -> Result<()> {
-    stream.write_all("Welcome to erdb".as_bytes())?;
+/// Handles a meta command (like, .tables or .columns). Returns true if the meta command was .exit
+fn handle_metacommand(
+    writer: &mut BufWriter<&TcpStream>,
+    command: &str,
+    catalog: &RwLock<Catalog>,
+) -> Result<bool> {
+    let mut cmd = metacommand();
 
-    let mut reader = BufReader::new(&stream);
-    let mut writer = BufWriter::new(&stream);
-    let mut line = String::new();
-
-    loop {
-        line.clear();
-        writer.write_all("\n> ".as_bytes())?;
-        writer.flush()?;
-        reader.read_line(&mut line)?;
-
-        if line.as_bytes().is_empty() {
-            // Client didn't send anything.
-            return Ok(());
-        } else {
-            trim_newline(&mut line);
-            if line.eq(".exit") {
-                break;
-            } else if line.eq(".tables") {
+    match cmd.try_get_matches_from_mut(command.split_whitespace()) {
+        Ok(matches) => match matches.subcommand() {
+            Some((".tables", _matches)) => {
                 let catalog = catalog.read().unwrap();
-                let tables = catalog.list_tables();
-                writer.write_all(tables.join(" ").as_bytes())?;
-            } else if line.starts_with(".columns") {
-                let split = line.split(' ').collect::<Vec<&str>>();
-                if !split.first().unwrap().eq(&".columns") {
-                    writer.write_all("Unknown command".as_bytes())?;
-                    continue;
-                }
-                if split.len() != 2 || split.get(1).unwrap().is_empty() {
-                    writer.write_all("Expected a single table name".as_bytes())?;
-                    continue;
-                }
-                let table_name = split.get(1).unwrap();
+                let mut tables = catalog.list_tables();
+                tables.sort();
+                writer.write_all(tables.join("\n").as_bytes())?;
+            }
+            Some((".columns", matches)) => {
+                let table = match matches
+                    .get_raw("table_name")
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .to_str()
+                {
+                    Some(s) => s,
+                    None => {
+                        writer.write_all("Invalid table name".as_bytes())?;
+                        return Ok(false);
+                    }
+                };
                 let catalog = catalog.read().unwrap();
-                match catalog.get_schema(table_name) {
+                match catalog.get_schema(table) {
                     Some(schema) => {
                         for column in schema.columns() {
                             writer.write_all(format!("{:?}\n", column).as_bytes())?;
@@ -87,10 +91,81 @@ fn handle_client(mut stream: TcpStream, catalog: &RwLock<Catalog>) -> Result<()>
                     }
                     None => writer.write_all("Could not find table".as_bytes())?,
                 }
-            } else {
-                writer.write_all(format!("Unknown command: {line}").as_bytes())?;
             }
+            Some((".exit", _matches)) => return Ok(true),
+            _ => (),
+        },
+        Err(e) => {
+            writer.write_all(e.to_string().as_bytes())?;
+            writer.write_all(format!("{}", cmd.render_help()).as_bytes())?;
         }
+    }
+
+    Ok(false)
+}
+
+fn handle_sql_statement(
+    writer: &mut BufWriter<&TcpStream>,
+    sql: &str,
+    catalog: &RwLock<Catalog>,
+) -> Result<()> {
+    let statement = parse_sql(sql)?;
+    match statement {
+        Statement::CreateTable { name, columns } => {
+            let columns = columns.into_iter().map(|col| col.into()).collect();
+            let mut catalog = catalog.write().unwrap();
+            catalog.create_table(&name, columns)?;
+            writer.write_all("Table created".as_bytes())?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_client(mut stream: TcpStream, catalog: &RwLock<Catalog>) -> Result<()> {
+    stream.write_all("Welcome to erdb".as_bytes())?;
+    stream.write_all("\n> ".as_bytes())?;
+    stream.flush()?;
+
+    let mut reader = BufReader::new(&stream);
+    let mut writer = BufWriter::new(&stream);
+    let mut line = String::new();
+    let mut statement = String::new();
+
+    loop {
+        line.clear();
+        writer.flush()?;
+        reader.read_line(&mut line)?;
+
+        if line.as_bytes().is_empty() {
+            // Client didn't send anything. Connection lost?
+            return Ok(());
+        }
+        if line.starts_with('.') && statement.trim().is_empty() {
+            if handle_metacommand(&mut writer, &line, catalog)? {
+                break;
+            }
+            line.clear();
+            writer.write_all("\n> ".as_bytes())?;
+        } else {
+            statement.push_str(&line);
+
+            // execute a statement when it ends with a semicolon
+            if statement.trim_end().ends_with(';') {
+                match handle_sql_statement(&mut writer, &statement, catalog) {
+                    Ok(()) => (),
+                    Err(e) => {
+                        writer.write_all(format!("Error: {}", e).as_bytes())?;
+                    }
+                }
+                statement.clear();
+            }
+            if statement.trim().is_empty() {
+                writer.write_all("\n> ".as_bytes())?;
+            }
+            line.clear();
+        }
+
+        writer.flush()?;
     }
 
     stream.shutdown(Shutdown::Both)?;
@@ -98,6 +173,7 @@ fn handle_client(mut stream: TcpStream, catalog: &RwLock<Catalog>) -> Result<()>
 }
 
 fn main() -> Result<()> {
+    println!("Welcome to erdb.");
     let config = ServerConfig::parse();
 
     let file_manager = FileManager::new(config.data)?;
@@ -112,6 +188,24 @@ fn main() -> Result<()> {
     thread::scope(|scope| {
         let catalog = &catalog;
 
+        scope.spawn(|| {
+            println!("Press enter to flush all buffers");
+            let mut buffer = String::new();
+            loop {
+                match std::io::stdin().read_line(&mut buffer) {
+                    Ok(_) => {
+                        println!("Flushing all buffers...");
+                        match buffer_manager.flush_all_buffers() {
+                            Ok(()) => println!("Done"),
+                            Err(e) => println!("Failed. Reason: {}", e),
+                        }
+                    }
+                    Err(e) => {
+                        println!("Could not read user input. Reason: {}", e);
+                    }
+                }
+            }
+        });
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {

@@ -6,8 +6,9 @@ pub enum DataType {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct ColumnDef {
+pub struct ColumnDefinition {
     pub name: String,
+    pub offset: u8,
     pub data_type: DataType,
     pub not_null: bool,
 }
@@ -16,6 +17,6 @@ pub struct ColumnDef {
 pub enum Statement {
     CreateTable {
         name: String,
-        columns: Vec<ColumnDef>,
+        columns: Vec<ColumnDefinition>,
     },
 }

@@ -100,7 +100,7 @@ impl<'a> Catalog<'a> {
             let table = table?;
             let name = table.as_str(1).to_owned();
             let id = table.as_i32(0) as u16;
-            self.next_table_id = self.next_table_id.max(id);
+            self.next_table_id = self.next_table_id.max(id + 1);
             self.table_name_to_id.insert(name, id);
         }
 

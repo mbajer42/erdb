@@ -3,10 +3,10 @@ use std::vec::IntoIter;
 
 use anyhow::{Error, Result};
 
-use self::ast::{ColumnDef, DataType, Statement};
+use self::ast::{ColumnDefinition, DataType, Statement};
 use self::token::{tokenize, Keyword, Token};
 
-mod ast;
+pub mod ast;
 mod token;
 
 pub struct Parser {
@@ -64,13 +64,14 @@ impl Parser {
         })
     }
 
-    fn parse_column_definitions(&mut self) -> Result<Vec<ColumnDef>> {
+    fn parse_column_definitions(&mut self) -> Result<Vec<ColumnDefinition>> {
         self.expect(Token::LeftParen)?;
 
         let mut columns = vec![];
+        let mut offset = 0;
 
         loop {
-            columns.push(self.parse_column_definition()?);
+            columns.push(self.parse_column_definition(offset)?);
             let comma = if self.peek_token() == &Token::Comma {
                 self.next_token();
                 true
@@ -85,12 +86,17 @@ impl Parser {
                 let token = self.next_token();
                 self.wrong_token("')' or ',' after a column definition", token)?;
             }
+
+            offset = offset.wrapping_add(1);
+            if offset == 0 {
+                return Err(Error::msg("Only 256 columns are currently supported"));
+            }
         }
 
         Ok(columns)
     }
 
-    fn parse_column_definition(&mut self) -> Result<ColumnDef> {
+    fn parse_column_definition(&mut self, offset: u8) -> Result<ColumnDefinition> {
         let column_name = self.parse_identifier()?;
         let data_type = self.parse_data_type()?;
 
@@ -105,9 +111,10 @@ impl Parser {
             false
         };
 
-        Ok(ColumnDef {
+        Ok(ColumnDefinition {
             name: column_name,
             data_type,
+            offset,
             not_null,
         })
     }
@@ -165,7 +172,7 @@ pub fn parse_sql(sql: &str) -> Result<Statement> {
 
 #[cfg(test)]
 mod tests {
-    use super::ast::{ColumnDef, DataType, Statement};
+    use super::ast::{ColumnDefinition, DataType, Statement};
     use super::parse_sql;
 
     #[test]
@@ -183,24 +190,28 @@ mod tests {
         let expected_statement = Statement::CreateTable {
             name: "accounts".to_owned(),
             columns: vec![
-                ColumnDef {
+                ColumnDefinition {
                     name: "id".to_owned(),
                     data_type: DataType::Integer,
+                    offset: 0,
                     not_null: true,
                 },
-                ColumnDef {
+                ColumnDefinition {
                     name: "name".to_owned(),
                     data_type: DataType::Text,
+                    offset: 1,
                     not_null: true,
                 },
-                ColumnDef {
+                ColumnDefinition {
                     name: "active".to_owned(),
                     data_type: DataType::Boolean,
+                    offset: 2,
                     not_null: false,
                 },
-                ColumnDef {
+                ColumnDefinition {
                     name: "email".to_owned(),
                     data_type: DataType::Text,
+                    offset: 3,
                     not_null: false,
                 },
             ],

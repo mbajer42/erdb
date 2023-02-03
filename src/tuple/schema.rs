@@ -4,6 +4,7 @@ use std::str::FromStr;
 use anyhow::Error;
 
 use super::Tuple;
+use crate::parser::ast;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TypeId {
@@ -21,6 +22,16 @@ impl FromStr for TypeId {
             "Integer" => Ok(TypeId::Integer),
             "Text" => Ok(TypeId::Text),
             s => Err(Error::msg(format!("Invalid TypeId {}", s))),
+        }
+    }
+}
+
+impl From<ast::DataType> for TypeId {
+    fn from(value: ast::DataType) -> Self {
+        match value {
+            ast::DataType::Integer => Self::Integer,
+            ast::DataType::Text => Self::Text,
+            ast::DataType::Boolean => Self::Boolean,
         }
     }
 }
@@ -73,6 +84,17 @@ impl From<Tuple> for ColumnDefinition {
             column_name: tuple.as_str(1).to_owned(),
             column_offset: tuple.as_i32(2) as u8,
             not_null: tuple.as_bool(4),
+        }
+    }
+}
+
+impl From<ast::ColumnDefinition> for ColumnDefinition {
+    fn from(value: ast::ColumnDefinition) -> Self {
+        Self {
+            type_id: value.data_type.into(),
+            column_name: value.name,
+            column_offset: value.offset,
+            not_null: value.not_null,
         }
     }
 }
