@@ -1,4 +1,4 @@
-use super::schema::{ColumnDefinition, TypeId};
+use crate::catalog::schema::{ColumnDefinition, TypeId};
 
 #[derive(PartialEq, Debug)]
 pub enum Value {
@@ -86,7 +86,7 @@ impl Value {
 #[cfg(test)]
 mod tests {
     use super::Value;
-    use crate::tuple::schema::{ColumnDefinition, TypeId};
+    use crate::catalog::schema::{ColumnDefinition, TypeId};
 
     fn serialize_parse_test_helper(buffer: &mut [u8], col: ColumnDefinition, value: Value) {
         value.serialize_value(buffer);

@@ -5,9 +5,9 @@ use lazy_static::lazy_static;
 
 use super::tuple::{parse_heap_tuple, required_free_space, serialize_heap_tuple, MAX_TUPLE_SIZE};
 use crate::buffer::buffer_manager::{BufferGuard, BufferManager};
+use crate::catalog::schema::Schema;
 use crate::common::{PageNo, TableId, INVALID_PAGE_NO, PAGE_SIZE};
 use crate::storage::common::{PageHeader, Serialize, TUPLE_SLOT_SIZE};
-use crate::tuple::schema::Schema;
 use crate::tuple::Tuple;
 
 lazy_static! {
@@ -159,8 +159,8 @@ mod tests {
 
     use super::Table;
     use crate::buffer::buffer_manager::BufferManager;
+    use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::storage::file_manager::FileManager;
-    use crate::tuple::schema::{ColumnDefinition, Schema, TypeId};
     use crate::tuple::value::Value;
     use crate::tuple::Tuple;
 

@@ -1,6 +1,5 @@
 use self::value::Value;
 
-pub mod schema;
 pub mod value;
 
 pub struct Tuple {

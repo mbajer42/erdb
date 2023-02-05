@@ -4,11 +4,13 @@ use anyhow::{Error, Result};
 use lazy_static::lazy_static;
 
 use crate::buffer::buffer_manager::BufferManager;
+use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
 use crate::common::TableId;
 use crate::storage::heap::table::Table;
-use crate::tuple::schema::{ColumnDefinition, Schema, TypeId};
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
+
+pub mod schema;
 
 const USER_DATA_TABLE_ID_START: TableId = 10;
 const CATALOG_TABLES_TABLE_ID: TableId = 1;
@@ -69,6 +71,10 @@ impl<'a> Catalog<'a> {
         this.load_tables()?;
 
         Ok(this)
+    }
+
+    pub fn get_table_id(&self, table_name: &str) -> Option<TableId> {
+        self.table_name_to_id.get(table_name).copied()
     }
 
     pub fn get_schema(&self, table_name: &str) -> Option<&Schema> {
@@ -193,9 +199,9 @@ mod tests {
 
     use super::{Catalog, CATALOG_TABLES_SCHEMA};
     use crate::buffer::buffer_manager::BufferManager;
+    use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::catalog::{CATALOG_COLUMNS_NAME, CATALOG_COLUMNS_SCHEMA, CATALOG_TABLES_NAME};
     use crate::storage::file_manager::FileManager;
-    use crate::tuple::schema::{ColumnDefinition, Schema, TypeId};
 
     #[test]
     fn can_create_system_tables() -> Result<()> {

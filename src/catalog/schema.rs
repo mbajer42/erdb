@@ -109,6 +109,10 @@ impl Schema {
         Self { columns }
     }
 
+    pub fn find_column(&self, name: &str) -> Option<&ColumnDefinition> {
+        self.columns.iter().find(|col| col.column_name().eq(name))
+    }
+
     pub fn columns(&self) -> &[ColumnDefinition] {
         &self.columns
     }

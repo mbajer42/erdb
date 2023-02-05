@@ -1,3 +1,4 @@
+mod analyzer;
 mod buffer;
 mod catalog;
 mod common;
@@ -10,6 +11,7 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::RwLock;
 use std::thread;
 
+use analyzer::Analyzer;
 use anyhow::{Context, Result};
 use buffer::buffer_manager::BufferManager;
 use catalog::Catalog;
@@ -117,7 +119,12 @@ fn handle_sql_statement(
             catalog.create_table(&name, columns)?;
             writer.write_all("Table created".as_bytes())?;
         }
-        Statement::Select { projections: _, from: _ } => unimplemented!(),
+        query => {
+            let catalog = catalog.read().unwrap();
+            let analyzer = Analyzer::new(&catalog);
+            let query = analyzer.analyze(query)?;
+            writer.write_all(format!("Query: {:?}", query).as_bytes())?;
+        }
     }
     Ok(())
 }

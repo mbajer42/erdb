@@ -1,7 +1,7 @@
 use super::header::HeapTupleHeader;
+use crate::catalog::schema::Schema;
 use crate::common::PAGE_SIZE;
 use crate::storage::common::{PageHeader, TUPLE_SLOT_SIZE};
-use crate::tuple::schema::Schema;
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
 
@@ -53,7 +53,7 @@ mod tests {
     use lazy_static::lazy_static;
 
     use super::{parse_heap_tuple, serialize_heap_tuple};
-    use crate::tuple::schema::{ColumnDefinition, Schema, TypeId};
+    use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::tuple::value::Value;
     use crate::tuple::Tuple;
 
