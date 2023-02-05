@@ -14,9 +14,30 @@ pub struct ColumnDefinition {
 }
 
 #[derive(Debug, PartialEq)]
+pub enum Expr {
+    Identifier(String),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Table {
+    TableReference { name: String, alias: Option<String> },
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Projection {
+    UnnamedExpr(Expr),
+    NamedExpr { expression: Expr, alias: String },
+    Wildcard,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Statement {
     CreateTable {
         name: String,
         columns: Vec<ColumnDefinition>,
+    },
+    Select {
+        projections: Vec<Projection>,
+        from: Table,
     },
 }

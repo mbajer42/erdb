@@ -117,6 +117,7 @@ fn handle_sql_statement(
             catalog.create_table(&name, columns)?;
             writer.write_all("Table created".as_bytes())?;
         }
+        Statement::Select { projections: _, from: _ } => unimplemented!(),
     }
     Ok(())
 }

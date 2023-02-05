@@ -3,7 +3,7 @@ use std::vec::IntoIter;
 
 use anyhow::{Error, Result};
 
-use self::ast::{ColumnDefinition, DataType, Statement};
+use self::ast::{ColumnDefinition, DataType, Expr, Projection, Statement, Table};
 use self::token::{tokenize, Keyword, Token};
 
 pub mod ast;
@@ -39,9 +39,90 @@ impl Parser {
         match self.next_token() {
             Token::Keyword(keyword) => match keyword {
                 Keyword::Create => self.parse_create_statement(),
+                Keyword::Select => self.parse_select_statement(),
                 found => self.wrong_keyword("a statement", found)?,
             },
             found => self.wrong_token("a statement", found)?,
+        }
+    }
+
+    fn parse_select_statement(&mut self) -> Result<Statement> {
+        let projections = self.parse_projections()?;
+
+        self.expect(Token::Keyword(Keyword::From))?;
+        let from = self.parse_table()?;
+
+        Ok(Statement::Select { projections, from })
+    }
+
+    fn parse_table(&mut self) -> Result<Table> {
+        let table_name = self.parse_identifier()?;
+
+        let alias = if self.peek_token() == &Token::Keyword(Keyword::As) {
+            self.next_token();
+            Some(self.parse_identifier()?)
+        } else if let Token::Identifier(_s) = self.peek_token() {
+            Some(self.parse_identifier()?)
+        } else {
+            None
+        };
+
+        Ok(Table::TableReference {
+            name: table_name,
+            alias,
+        })
+    }
+
+    fn parse_projections(&mut self) -> Result<Vec<Projection>> {
+        let mut projections = vec![];
+
+        loop {
+            projections.push(self.parse_projection()?);
+            if self.peek_token() == &Token::Comma {
+                self.next_token();
+            } else {
+                break;
+            }
+        }
+
+        Ok(projections)
+    }
+
+    fn parse_projection(&mut self) -> Result<Projection> {
+        match self.peek_token() {
+            Token::Star => {
+                self.next_token();
+                Ok(Projection::Wildcard)
+            }
+            _ => {
+                let expr = self.parse_expression()?;
+                match self.peek_token() {
+                    Token::Keyword(Keyword::As) => {
+                        // consume 'AS'
+                        self.next_token();
+                        let alias = self.parse_identifier()?;
+                        Ok(Projection::NamedExpr {
+                            expression: expr,
+                            alias,
+                        })
+                    }
+                    Token::Identifier(_s) => {
+                        let alias = self.parse_identifier()?;
+                        Ok(Projection::NamedExpr {
+                            expression: expr,
+                            alias,
+                        })
+                    }
+                    _ => Ok(Projection::UnnamedExpr(expr)),
+                }
+            }
+        }
+    }
+
+    fn parse_expression(&mut self) -> Result<Expr> {
+        match self.next_token() {
+            Token::Identifier(s) => Ok(Expr::Identifier(s)),
+            found => self.wrong_token("an expression", found)?,
         }
     }
 
@@ -172,7 +253,7 @@ pub fn parse_sql(sql: &str) -> Result<Statement> {
 
 #[cfg(test)]
 mod tests {
-    use super::ast::{ColumnDefinition, DataType, Statement};
+    use super::ast::{ColumnDefinition, DataType, Expr, Projection, Statement, Table};
     use super::parse_sql;
 
     #[test]
@@ -218,5 +299,50 @@ mod tests {
         };
 
         assert_eq!(statement, expected_statement);
+    }
+
+    #[test]
+    fn can_parse_wildcard_select_statement() {
+        let sql = "
+            select * from accounts
+        ";
+
+        let statement = parse_sql(sql).unwrap();
+        let expected_statement = Statement::Select {
+            projections: vec![Projection::Wildcard],
+            from: Table::TableReference {
+                name: "accounts".to_owned(),
+                alias: None,
+            },
+        };
+
+        assert_eq!(statement, expected_statement);
+    }
+
+    #[test]
+    fn can_parse_select_statements_with_aliases() {
+        let sql = "
+            select id, name as full_name, active is_active
+            from table1 table_alias
+        ";
+
+        let _statement = parse_sql(sql).unwrap();
+        let _expected_statement = Statement::Select {
+            projections: vec![
+                Projection::UnnamedExpr(Expr::Identifier("id".to_owned())),
+                Projection::NamedExpr {
+                    expression: Expr::Identifier("name".to_owned()),
+                    alias: "full_name".to_owned(),
+                },
+                Projection::NamedExpr {
+                    expression: Expr::Identifier("active".to_owned()),
+                    alias: "is_active".to_owned(),
+                },
+            ],
+            from: Table::TableReference {
+                name: "table1".to_owned(),
+                alias: Some("table_alias".to_owned()),
+            },
+        };
     }
 }

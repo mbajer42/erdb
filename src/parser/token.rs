@@ -5,11 +5,14 @@ use anyhow::{Error, Result};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Keyword {
+    As,
     Boolean,
     Create,
+    From,
     Integer,
     Not,
     Null,
+    Select,
     Table,
     Text,
 }
@@ -19,11 +22,14 @@ impl FromStr for Keyword {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let res = match s {
+            "as" => Self::As,
             "boolean" => Self::Boolean,
             "create" => Self::Create,
+            "from" => Self::From,
             "integer" => Self::Integer,
             "not" => Self::Not,
             "null" => Self::Null,
+            "select" => Self::Select,
             "table" => Self::Table,
             "text" => Self::Text,
             _ => return Err(()),
@@ -46,6 +52,8 @@ pub enum Token {
     RightParen,
     // Semicolon ';'
     Semicolon,
+    // star '*'
+    Star,
     // not a token, just end of query
     End,
 }
@@ -89,6 +97,7 @@ impl<'a> Tokenizer<'a> {
                 ')' => Token::RightParen,
                 ';' => Token::Semicolon,
                 ',' => Token::Comma,
+                '*' => Token::Star,
                 'a'..='z' | 'A'..='Z' | '_' => {
                     let word = self.word(pos);
                     if let Ok(keyword) = Keyword::from_str(&word) {
@@ -153,6 +162,44 @@ mod tests {
             Token::Keyword(Keyword::Boolean),
             Token::Comma,
             Token::RightParen,
+        ];
+
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn can_tokenize_wildcard_select() {
+        let sql = "
+            select * from tablename
+        ";
+
+        let tokens = tokenize(sql).expect("Expected to tokenize without any errors");
+        let expected = vec![
+            Token::Keyword(Keyword::Select),
+            Token::Star,
+            Token::Keyword(Keyword::From),
+            Token::Identifier("tablename".to_owned()),
+        ];
+
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn can_tokenize_select_of_columns() {
+        let sql = "
+            select id, mail as email from tablename
+        ";
+
+        let tokens = tokenize(sql).expect("Expected to tokenize without any errors");
+        let expected = vec![
+            Token::Keyword(Keyword::Select),
+            Token::Identifier("id".to_owned()),
+            Token::Comma,
+            Token::Identifier("mail".to_owned()),
+            Token::Keyword(Keyword::As),
+            Token::Identifier("email".to_owned()),
+            Token::Keyword(Keyword::From),
+            Token::Identifier("tablename".to_owned()),
         ];
 
         assert_eq!(tokens, expected);
