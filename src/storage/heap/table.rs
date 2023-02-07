@@ -50,7 +50,7 @@ impl<'a> HeapTupleIterator<'a> {
                 self.curr_slot = 0;
             } else {
                 let (offset, _size) = PageHeader::tuple_slot(&data, self.curr_slot);
-                let tuple = parse_heap_tuple(&(&data)[offset as usize..], self.table.schema);
+                let tuple = parse_heap_tuple(&(&data)[offset as usize..], &self.table.schema);
                 self.curr_slot += 1;
 
                 return Ok(Some(tuple));
@@ -81,16 +81,20 @@ fn insert_tuple(buffer: &mut [u8], tuple_size: u16, tuple: &Tuple) -> bool {
 pub struct Table<'a> {
     table_id: TableId,
     buffer_manager: &'a BufferManager,
-    schema: &'a Schema,
+    schema: Schema,
 }
 
 impl<'a> Table<'a> {
-    pub fn new(table_id: TableId, buffer_manager: &'a BufferManager, schema: &'a Schema) -> Self {
+    pub fn new(table_id: TableId, buffer_manager: &'a BufferManager, schema: Schema) -> Self {
         Self {
             table_id,
             buffer_manager,
             schema,
         }
+    }
+
+    pub fn schema(&self) -> &Schema {
+        &self.schema
     }
 
     fn fetch_page(&self, page_no: PageNo) -> Result<BufferGuard> {
@@ -184,7 +188,7 @@ mod tests {
             ColumnDefinition::new(TypeId::Integer, "nullable_integer".to_owned(), 3, true),
         ]);
 
-        let table = Table::new(1, &buffer_manager, &schema);
+        let table = Table::new(1, &buffer_manager, schema.clone());
 
         let tuples = (0..10)
             .map(|i| {

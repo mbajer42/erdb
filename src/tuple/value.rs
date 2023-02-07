@@ -1,6 +1,8 @@
+use std::fmt::Display;
+
 use crate::catalog::schema::{ColumnDefinition, TypeId};
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Boolean(bool),
     Integer(i32),
@@ -79,6 +81,17 @@ impl Value {
         match self {
             Value::Boolean(val) => *val,
             _ => unreachable!(),
+        }
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Boolean(val) => Display::fmt(val, f),
+            Value::Integer(val) => Display::fmt(val, f),
+            Value::String(val) => Display::fmt(val, f),
+            Value::Null => Display::fmt("NULL", f),
         }
     }
 }

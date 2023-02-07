@@ -1,6 +1,6 @@
 use anyhow::{Error, Result};
 
-use crate::catalog::schema::TypeId;
+use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
 use crate::catalog::Catalog;
 use crate::parser::ast::{self, Projection, Statement};
 
@@ -31,18 +31,18 @@ impl<'a> Analyzer<'a> {
         let projections_with_specification = self.analyze_projections(projections, &table)?;
 
         let mut projections = vec![];
-        let mut projection_specification = vec![];
+        let mut output_columns = vec![];
 
-        for (expr, name, type_id) in projections_with_specification {
+        for (col, (expr, name, type_id)) in projections_with_specification.into_iter().enumerate() {
             projections.push(expr);
-            projection_specification.push((name, type_id));
+            output_columns.push(ColumnDefinition::new(type_id, name, col as u8, false));
         }
 
         Ok(Query {
             query_type: QueryType::Select,
             from: table,
             projections,
-            projection_specification,
+            output_schema: Schema::new(output_columns),
         })
     }
 
@@ -133,7 +133,7 @@ mod tests {
     use super::query::{Expr, Query, QueryType, Table};
     use super::Analyzer;
     use crate::buffer::buffer_manager::BufferManager;
-    use crate::catalog::schema::{ColumnDefinition, TypeId};
+    use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::catalog::Catalog;
     use crate::parser::parse_sql;
     use crate::storage::file_manager::FileManager;
@@ -163,14 +163,14 @@ mod tests {
         let expected_query = Query {
             query_type: QueryType::Select,
             from: Table::TableReference {
-                table_id: table_id,
+                table_id,
                 schema,
             },
             projections: vec![Expr::ColumnReference(0), Expr::ColumnReference(1)],
-            projection_specification: vec![
-                ("id".to_owned(), TypeId::Integer),
-                ("name".to_owned(), TypeId::Text),
-            ],
+            output_schema: Schema::new(vec![
+                ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, false),
+                ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, false),
+            ]),
         };
 
         assert_eq!(query, expected_query);

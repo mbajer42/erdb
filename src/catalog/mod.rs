@@ -47,13 +47,13 @@ impl<'a> Catalog<'a> {
         let tables_table = Table::new(
             CATALOG_TABLES_TABLE_ID,
             buffer_manager,
-            &CATALOG_TABLES_SCHEMA,
+            CATALOG_TABLES_SCHEMA.clone(),
         );
 
         let columns_table = Table::new(
             CATALOG_COLUMNS_TABLE_ID,
             buffer_manager,
-            &CATALOG_COLUMNS_SCHEMA,
+            CATALOG_COLUMNS_SCHEMA.clone(),
         );
 
         let mut this = Self {

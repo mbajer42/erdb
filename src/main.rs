@@ -2,7 +2,10 @@ mod analyzer;
 mod buffer;
 mod catalog;
 mod common;
+mod executors;
 mod parser;
+mod planner;
+mod printer;
 mod storage;
 mod tuple;
 
@@ -13,11 +16,14 @@ use std::thread;
 
 use analyzer::Analyzer;
 use anyhow::{Context, Result};
-use buffer::buffer_manager::BufferManager;
+use buffer::buffer_manager::{BufferManager};
 use catalog::Catalog;
 use clap::{Arg, Command, Parser};
+use executors::ExecutorFactory;
 use parser::ast::Statement;
 use parser::parse_sql;
+use planner::Planner;
+use printer::Printer;
 use storage::file_manager::FileManager;
 
 #[derive(Parser)]
@@ -109,6 +115,7 @@ fn handle_metacommand(
 fn handle_sql_statement(
     writer: &mut BufWriter<&TcpStream>,
     sql: &str,
+    buffer_manager: &BufferManager,
     catalog: &RwLock<Catalog>,
 ) -> Result<()> {
     let statement = parse_sql(sql)?;
@@ -123,13 +130,22 @@ fn handle_sql_statement(
             let catalog = catalog.read().unwrap();
             let analyzer = Analyzer::new(&catalog);
             let query = analyzer.analyze(query)?;
-            writer.write_all(format!("Query: {:?}", query).as_bytes())?;
+            let planner = Planner::new();
+            let plan = planner.plan_query(query);
+            let mut executor_factory = ExecutorFactory::new(buffer_manager);
+            let executor = executor_factory.create_executor(plan)?;
+            let mut printer = Printer::new(executor);
+            printer.print_all_tupes(writer)?;
         }
     }
     Ok(())
 }
 
-fn handle_client(mut stream: TcpStream, catalog: &RwLock<Catalog>) -> Result<()> {
+fn handle_client(
+    mut stream: TcpStream,
+    catalog: &RwLock<Catalog>,
+    buffer_manager: &BufferManager,
+) -> Result<()> {
     stream.write_all("Welcome to erdb".as_bytes())?;
     stream.write_all("\n> ".as_bytes())?;
     stream.flush()?;
@@ -159,7 +175,7 @@ fn handle_client(mut stream: TcpStream, catalog: &RwLock<Catalog>) -> Result<()>
 
             // execute a statement when it ends with a semicolon
             if statement.trim_end().ends_with(';') {
-                match handle_sql_statement(&mut writer, &statement, catalog) {
+                match handle_sql_statement(&mut writer, &statement, buffer_manager, catalog) {
                     Ok(()) => (),
                     Err(e) => {
                         writer.write_all(format!("Error: {}", e).as_bytes())?;
@@ -194,6 +210,7 @@ fn main() -> Result<()> {
     let listener = TcpListener::bind(("localhost", config.port))?;
 
     thread::scope(|scope| {
+        let buffer_manager = &buffer_manager;
         let catalog = &catalog;
 
         scope.spawn(|| {
@@ -217,10 +234,12 @@ fn main() -> Result<()> {
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
-                    scope.spawn(move || match handle_client(stream, catalog) {
-                        Ok(()) => (),
-                        Err(e) => println!("Failed to handle client. Cause: {e}"),
-                    });
+                    scope.spawn(
+                        move || match handle_client(stream, catalog, buffer_manager) {
+                            Ok(()) => (),
+                            Err(e) => println!("Failed to handle client. Cause: {e}"),
+                        },
+                    );
                 }
                 Err(e) => println!("Could not get tcp stream: {e}"),
             }
