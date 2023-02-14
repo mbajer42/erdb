@@ -64,6 +64,9 @@ pub enum Expr {
         op: UnaryOperator,
         expr: Box<Expr>,
     },
+    IsNull(Box<Expr>),
+    IsNotNull(Box<Expr>),
+    Null,
 }
 
 impl Display for Expr {
@@ -74,6 +77,9 @@ impl Display for Expr {
             Self::Grouping(expr) => write!(f, "({})", expr),
             Expr::Binary { left, op, right } => write!(f, "{} {} {}", left, op, right),
             Expr::Unary { op, expr } => write!(f, "{}{}", op, expr),
+            Expr::IsNull(expr) => write!(f, "{} IS NULL", expr),
+            Expr::IsNotNull(expr) => write!(f, "{} IS NOT NULL", expr),
+            Expr::Null => write!(f, "NULL"),
         }
     }
 }

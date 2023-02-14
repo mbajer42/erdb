@@ -167,6 +167,16 @@ impl<'a> Analyzer<'a> {
                     ))
                 }
             }
+            ast::Expr::IsNull(expr) => {
+                let (expr, _) = self.analyze_expression(*expr, scope)?;
+                Ok((Expr::IsNull(Box::new(expr)), TypeId::Boolean))
+            }
+            ast::Expr::IsNotNull(expr) => {
+                let (expr, _) = self.analyze_expression(*expr, scope)?;
+                Ok((Expr::IsNotNull(Box::new(expr)), TypeId::Boolean))
+            }
+            // todo: boolean is of course not the actual type
+            ast::Expr::Null => Ok((Expr::Null, TypeId::Boolean)),
         }
     }
 }

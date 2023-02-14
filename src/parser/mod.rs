@@ -1,5 +1,4 @@
-use std::iter::Peekable;
-use std::vec::IntoIter;
+use std::collections::VecDeque;
 
 use anyhow::{Error, Result};
 
@@ -12,30 +11,32 @@ pub mod ast;
 mod token;
 
 pub(in self::super) mod precedence {
-    pub const PLUS_MINUS: u8 = 10;
-    pub const PRODUCT_DIVISION: u8 = 20;
+    pub const NOT_NULL: u8 = 11;
+    pub const IS_NULL: u8 = 12;
+    pub const PLUS_MINUS: u8 = 14;
+    pub const PRODUCT_DIVISION: u8 = 15;
 }
 pub struct Parser {
-    tokens: Peekable<IntoIter<Token>>,
+    tokens: VecDeque<Token>,
 }
 
 impl Parser {
     fn new(sql: &str) -> Result<Self> {
         let tokens = tokenize(sql)?;
         Ok(Self {
-            tokens: tokens.into_iter().peekable(),
+            tokens: tokens.into(),
         })
     }
 
     fn next_token(&mut self) -> Token {
-        match self.tokens.next() {
+        match self.tokens.pop_front() {
             Some(token) => token,
             None => Token::End,
         }
     }
 
-    fn peek_token(&mut self) -> &Token {
-        match self.tokens.peek() {
+    fn peek_token(&self) -> &Token {
+        match self.tokens.front() {
             Some(token) => token,
             None => &Token::End,
         }
@@ -149,6 +150,7 @@ impl Parser {
                     expr: Box::new(expr),
                 })
             }
+            Token::Keyword(Keyword::Null) => Ok(Expr::Null),
             Token::Plus => {
                 let expr = self.parse_expression_with_precedence(precedence::PLUS_MINUS)?;
                 Ok(Expr::Unary {
@@ -182,6 +184,20 @@ impl Parser {
                     right: Box::new(right),
                 })
             }
+            Token::Keyword(Keyword::Is) => {
+                if self.peek_keywords_match(&[Keyword::Null]) {
+                    self.advance(1);
+                    Ok(Expr::IsNull(Box::new(left)))
+                } else if self.peek_keywords_match(&[Keyword::Not, Keyword::Null]) {
+                    self.advance(2);
+                    Ok(Expr::IsNotNull(Box::new(left)))
+                } else {
+                    Err(Error::msg(format!(
+                        "Expected 'NULL' or 'NOT NULL' but found {:?}",
+                        self.next_token()
+                    )))
+                }
+            }
             found => Err(Error::msg(format!(
                 "Could not parse infix expression for {:?}",
                 found
@@ -189,10 +205,20 @@ impl Parser {
         }
     }
 
-    fn next_precedence(&mut self) -> u8 {
+    fn next_precedence(&self) -> u8 {
         match self.peek_token() {
             Token::Plus | Token::Minus => precedence::PLUS_MINUS,
             Token::Star | Token::Division => precedence::PRODUCT_DIVISION,
+            Token::Keyword(Keyword::Is)
+                if self.peek_keywords_match(&[Keyword::Is, Keyword::Null]) =>
+            {
+                precedence::IS_NULL
+            }
+            Token::Keyword(Keyword::Is)
+                if self.peek_keywords_match(&[Keyword::Is, Keyword::Not, Keyword::Null]) =>
+            {
+                precedence::NOT_NULL
+            }
             _ => 0,
         }
     }
@@ -290,6 +316,23 @@ impl Parser {
         match self.next_token() {
             Token::Identifier(s) => Ok(s),
             found => self.wrong_token("an identifier", found)?,
+        }
+    }
+
+    fn peek_keywords_match(&self, expected: &[Keyword]) -> bool {
+        for (i, keyword) in expected.iter().enumerate() {
+            match self.tokens.get(i) {
+                Some(Token::Keyword(kw)) if kw == keyword => continue,
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    fn advance(&mut self, mut cnt: usize) {
+        while cnt > 0 {
+            self.tokens.pop_front();
+            cnt -= 1;
         }
     }
 

@@ -13,6 +13,7 @@ pub enum QueryType {
 pub enum Expr {
     ColumnReference(u8),
     Integer(i32),
+    Null,
     Unary {
         op: ast::UnaryOperator,
         expr: Box<Expr>,
@@ -22,6 +23,8 @@ pub enum Expr {
         op: ast::BinaryOperator,
         right: Box<Expr>,
     },
+    IsNull(Box<Expr>),
+    IsNotNull(Box<Expr>),
 }
 
 impl Expr {
@@ -43,6 +46,15 @@ impl Expr {
                     BinaryOperator::Divide => Value::Integer(left / right),
                 }
             }
+            Expr::IsNull(expr) => {
+                let val = expr.evaluate(tuple);
+                Value::Boolean(val.is_null())
+            }
+            Expr::IsNotNull(expr) => {
+                let val = expr.evaluate(tuple);
+                Value::Boolean(!val.is_null())
+            }
+            Expr::Null => Value::Null,
         }
     }
 }
@@ -103,5 +115,23 @@ mod tests {
 
         let value = expr.evaluate(&(Tuple::new(vec![])));
         assert_eq!(value, Value::Integer(14));
+    }
+
+    #[test]
+    fn can_evaluate_is_null() {
+        let expr = Expr::IsNull(Box::new(Expr::Null));
+        assert_eq!(expr.evaluate(&(Tuple::new(vec![]))), Value::Boolean(true));
+
+        let expr = Expr::IsNull(Box::new(Expr::Integer(42)));
+        assert_eq!(expr.evaluate(&(Tuple::new(vec![]))), Value::Boolean(false));
+    }
+
+    #[test]
+    fn can_evaluate_is_not_null() {
+        let expr = Expr::IsNotNull(Box::new(Expr::Null));
+        assert_eq!(expr.evaluate(&(Tuple::new(vec![]))), Value::Boolean(false));
+
+        let expr = Expr::IsNotNull(Box::new(Expr::Integer(42)));
+        assert_eq!(expr.evaluate(&(Tuple::new(vec![]))), Value::Boolean(true));
     }
 }
