@@ -47,8 +47,12 @@ impl<'a> Printer<'a> {
             .join("|");
         writer.write_all(header.as_bytes())?;
         writer.write_all("\n".as_bytes())?;
-        let header_size = header.chars().count();
-        let separator_line = format!("{:-^1$}", '-', header_size);
+        let separator_line = self
+            .column_widths
+            .iter()
+            .map(|width| format!("{:-^1$}", '-', width))
+            .collect::<Vec<String>>()
+            .join("+");
         writer.write_all(separator_line.as_bytes())?;
         writer.write_all("\n".as_bytes())?;
 
