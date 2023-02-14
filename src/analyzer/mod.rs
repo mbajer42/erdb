@@ -99,18 +99,18 @@ impl<'a> Analyzer<'a> {
         match projection {
             Projection::UnnamedExpr(expr) => {
                 let alias = expr.to_string();
-                let (expr, type_id) = self.analyze_expression(expr, scope)?;
+                let (expr, type_id) = Self::analyze_expression(expr, scope)?;
                 Ok((expr, alias, type_id))
             }
             Projection::NamedExpr { expr, alias } => {
-                let (expr, type_id) = self.analyze_expression(expr, scope)?;
+                let (expr, type_id) = Self::analyze_expression(expr, scope)?;
                 Ok((expr, alias, type_id))
             }
             Projection::Wildcard => unreachable!("Should be already handled"),
         }
     }
 
-    fn analyze_expression(&self, expr: ast::Expr, scope: &Table) -> Result<(Expr, TypeId)> {
+    fn analyze_expression(expr: ast::Expr, scope: &Table) -> Result<(Expr, TypeId)> {
         match expr {
             ast::Expr::Identifier(name) => {
                 let column = scope
@@ -125,10 +125,10 @@ impl<'a> Analyzer<'a> {
                 let num = number.parse::<i32>()?;
                 Ok((Expr::Integer(num), TypeId::Integer))
             }
-            ast::Expr::Grouping(expr) => self.analyze_expression(*expr, scope),
+            ast::Expr::Grouping(expr) => Self::analyze_expression(*expr, scope),
             ast::Expr::Binary { left, op, right } => {
-                let (left, left_type) = self.analyze_expression(*left, scope)?;
-                let (right, right_type) = self.analyze_expression(*right, scope)?;
+                let (left, left_type) = Self::analyze_expression(*left, scope)?;
+                let (right, right_type) = Self::analyze_expression(*right, scope)?;
                 if left_type != TypeId::Integer {
                     Err(Error::msg(format!(
                         "Cannot apply '{}' to type {}",
@@ -151,7 +151,7 @@ impl<'a> Analyzer<'a> {
                 }
             }
             ast::Expr::Unary { op, expr } => {
-                let (expr, type_id) = self.analyze_expression(*expr, scope)?;
+                let (expr, type_id) = Self::analyze_expression(*expr, scope)?;
                 if type_id != TypeId::Integer {
                     Err(Error::msg(format!(
                         "Cannot apply '{}' to type {}",
@@ -168,11 +168,11 @@ impl<'a> Analyzer<'a> {
                 }
             }
             ast::Expr::IsNull(expr) => {
-                let (expr, _) = self.analyze_expression(*expr, scope)?;
+                let (expr, _) = Self::analyze_expression(*expr, scope)?;
                 Ok((Expr::IsNull(Box::new(expr)), TypeId::Boolean))
             }
             ast::Expr::IsNotNull(expr) => {
-                let (expr, _) = self.analyze_expression(*expr, scope)?;
+                let (expr, _) = Self::analyze_expression(*expr, scope)?;
                 Ok((Expr::IsNotNull(Box::new(expr)), TypeId::Boolean))
             }
             // todo: boolean is of course not the actual type
