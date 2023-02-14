@@ -1,16 +1,14 @@
-
 use std::collections::HashMap;
 
 use anyhow::Result;
 
 use self::projection_executor::ProjectionExecutor;
 use self::seq_scan_executor::SeqScanExecutor;
-
-use crate::buffer::buffer_manager::{BufferManager};
+use crate::buffer::buffer_manager::BufferManager;
 use crate::catalog::schema::Schema;
 use crate::common::TableId;
 use crate::planner::plans::Plan;
-use crate::storage::heap::table::{Table};
+use crate::storage::heap::table::Table;
 use crate::tuple::Tuple;
 
 mod projection_executor;

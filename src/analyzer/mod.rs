@@ -97,20 +97,20 @@ impl<'a> Analyzer<'a> {
         scope: &Table,
     ) -> Result<(Expr, String, TypeId)> {
         match projection {
-            Projection::UnnamedExpr(expr) => self.analyze_expression(expr, scope, None),
-            Projection::NamedExpr { expression, alias } => {
-                self.analyze_expression(expression, scope, Some(alias))
+            Projection::UnnamedExpr(expr) => {
+                let alias = expr.to_string();
+                let (expr, type_id) = self.analyze_expression(expr, scope)?;
+                Ok((expr, alias, type_id))
+            }
+            Projection::NamedExpr { expr, alias } => {
+                let (expr, type_id) = self.analyze_expression(expr, scope)?;
+                Ok((expr, alias, type_id))
             }
             Projection::Wildcard => unreachable!("Should be already handled"),
         }
     }
 
-    fn analyze_expression(
-        &self,
-        expr: ast::Expr,
-        scope: &Table,
-        alias: Option<String>,
-    ) -> Result<(Expr, String, TypeId)> {
+    fn analyze_expression(&self, expr: ast::Expr, scope: &Table) -> Result<(Expr, TypeId)> {
         match expr {
             ast::Expr::Identifier(name) => {
                 let column = scope
@@ -118,9 +118,54 @@ impl<'a> Analyzer<'a> {
                     .find_column(&name)
                     .ok_or_else(|| Error::msg(format!("Could not find column {}", name)))?;
                 let column_offset = column.column_offset();
-                let name = alias.unwrap_or_else(|| column.column_name().to_owned());
                 let type_id = column.type_id();
-                Ok((Expr::ColumnReference(column_offset), name, type_id))
+                Ok((Expr::ColumnReference(column_offset), type_id))
+            }
+            ast::Expr::Number(number) => {
+                let num = number.parse::<i32>()?;
+                Ok((Expr::Integer(num), TypeId::Integer))
+            }
+            ast::Expr::Grouping(expr) => self.analyze_expression(*expr, scope),
+            ast::Expr::Binary { left, op, right } => {
+                let (left, left_type) = self.analyze_expression(*left, scope)?;
+                let (right, right_type) = self.analyze_expression(*right, scope)?;
+                if left_type != TypeId::Integer {
+                    Err(Error::msg(format!(
+                        "Cannot apply '{}' to type {}",
+                        op, left_type
+                    )))
+                } else if right_type != TypeId::Integer {
+                    Err(Error::msg(format!(
+                        "Cannot apply '{}' to type {}",
+                        op, right_type
+                    )))
+                } else {
+                    Ok((
+                        Expr::Binary {
+                            left: Box::new(left),
+                            op,
+                            right: Box::new(right),
+                        },
+                        left_type,
+                    ))
+                }
+            }
+            ast::Expr::Unary { op, expr } => {
+                let (expr, type_id) = self.analyze_expression(*expr, scope)?;
+                if type_id != TypeId::Integer {
+                    Err(Error::msg(format!(
+                        "Cannot apply '{}' to type {}",
+                        op, type_id
+                    )))
+                } else {
+                    Ok((
+                        Expr::Unary {
+                            op,
+                            expr: Box::new(expr),
+                        },
+                        type_id,
+                    ))
+                }
             }
         }
     }
@@ -135,6 +180,7 @@ mod tests {
     use crate::buffer::buffer_manager::BufferManager;
     use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::catalog::Catalog;
+    use crate::parser::ast::{BinaryOperator, UnaryOperator};
     use crate::parser::parse_sql;
     use crate::storage::file_manager::FileManager;
 
@@ -162,14 +208,68 @@ mod tests {
 
         let expected_query = Query {
             query_type: QueryType::Select,
-            from: Table::TableReference {
-                table_id,
-                schema,
-            },
+            from: Table::TableReference { table_id, schema },
             projections: vec![Expr::ColumnReference(0), Expr::ColumnReference(1)],
             output_schema: Schema::new(vec![
                 ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, false),
                 ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, false),
+            ]),
+        };
+
+        assert_eq!(query, expected_query);
+    }
+
+    #[test]
+    fn can_analyze_arithmetic_expressions() {
+        let data_dir = tempdir().unwrap();
+        let file_manager = FileManager::new(data_dir.path()).unwrap();
+        let buffer_manager = BufferManager::new(file_manager, 1);
+
+        let mut catalog = Catalog::new(&buffer_manager, true).unwrap();
+        let columns = vec![ColumnDefinition::new(
+            TypeId::Integer,
+            "id".to_owned(),
+            0,
+            true,
+        )];
+        catalog.create_table("accounts", columns).unwrap();
+        let table_id = catalog.get_table_id("accounts").unwrap();
+        let schema = catalog.get_schema("accounts").unwrap().clone();
+
+        let sql = "
+            select -id as negative_id, id+1, 2 * (3+5) from accounts
+        ";
+        let statement = parse_sql(sql).unwrap();
+        let analyzer = Analyzer::new(&catalog);
+        let query = analyzer.analyze(statement).unwrap();
+
+        let expected_query = Query {
+            query_type: QueryType::Select,
+            from: Table::TableReference { table_id, schema },
+            projections: vec![
+                Expr::Unary {
+                    op: UnaryOperator::Minus,
+                    expr: Box::new(Expr::ColumnReference(0)),
+                },
+                Expr::Binary {
+                    left: Box::new(Expr::ColumnReference(0)),
+                    op: BinaryOperator::Plus,
+                    right: Box::new(Expr::Integer(1)),
+                },
+                Expr::Binary {
+                    left: Box::new(Expr::Integer(2)),
+                    op: BinaryOperator::Multiply,
+                    right: Box::new(Expr::Binary {
+                        left: Box::new(Expr::Integer(3)),
+                        op: BinaryOperator::Plus,
+                        right: Box::new(Expr::Integer(5)),
+                    }),
+                },
+            ],
+            output_schema: Schema::new(vec![
+                ColumnDefinition::new(TypeId::Integer, "negative_id".to_owned(), 0, false),
+                ColumnDefinition::new(TypeId::Integer, "id + 1".to_owned(), 1, false),
+                ColumnDefinition::new(TypeId::Integer, "2 * (3 + 5)".to_owned(), 2, false),
             ]),
         };
 

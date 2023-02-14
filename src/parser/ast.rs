@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 #[derive(Debug, PartialEq)]
 pub enum DataType {
     Integer,
@@ -14,8 +16,66 @@ pub struct ColumnDefinition {
 }
 
 #[derive(Debug, PartialEq)]
+pub enum UnaryOperator {
+    Plus,
+    Minus,
+}
+
+impl Display for UnaryOperator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Plus => write!(f, "+"),
+            Self::Minus => write!(f, "-"),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum BinaryOperator {
+    Plus,
+    Minus,
+    Multiply,
+    Divide,
+}
+
+impl Display for BinaryOperator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Plus => write!(f, "+"),
+            Self::Minus => write!(f, "-"),
+            Self::Multiply => write!(f, "*"),
+            Self::Divide => write!(f, "/"),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Expr {
     Identifier(String),
+    Number(String),
+    // an expression in parenthesis, e.g. (1+1)
+    Grouping(Box<Expr>),
+    Binary {
+        left: Box<Expr>,
+        op: BinaryOperator,
+        right: Box<Expr>,
+    },
+    Unary {
+        op: UnaryOperator,
+        expr: Box<Expr>,
+    },
+}
+
+impl Display for Expr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Identifier(id) => write!(f, "{}", id),
+            Self::Number(num) => write!(f, "{}", num),
+            Self::Grouping(expr) => write!(f, "({})", expr),
+            Expr::Binary { left, op, right } => write!(f, "{} {} {}", left, op, right),
+            Expr::Unary { op, expr } => write!(f, "{}{}", op, expr),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -26,7 +86,7 @@ pub enum Table {
 #[derive(Debug, PartialEq)]
 pub enum Projection {
     UnnamedExpr(Expr),
-    NamedExpr { expression: Expr, alias: String },
+    NamedExpr { expr: Expr, alias: String },
     Wildcard,
 }
 

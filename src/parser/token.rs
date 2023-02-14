@@ -42,8 +42,10 @@ impl FromStr for Keyword {
 pub enum Token {
     /// an SQL identifier
     Identifier(String),
-    /// A keyword (e.g. CREATE)
+    /// a keyword (e.g. CREATE)
     Keyword(Keyword),
+    /// a number, like 123
+    Number(String),
     // Comma ','
     Comma,
     // Left parenthesis '('
@@ -54,6 +56,12 @@ pub enum Token {
     Semicolon,
     // star '*'
     Star,
+    // Minus '-'
+    Minus,
+    // Plus '+'
+    Plus,
+    // Division '/'
+    Division,
     // not a token, just end of query
     End,
 }
@@ -89,6 +97,21 @@ impl<'a> Tokenizer<'a> {
         self.sql[start..end].to_lowercase()
     }
 
+    fn number(&mut self, start: usize) -> String {
+        let mut end = start + 1;
+        while let Some((pos, ch)) = self.chars.peek() {
+            if ('0'..='9').contains(ch) {
+                self.chars.next();
+                continue;
+            } else {
+                end = *pos;
+                break;
+            }
+        }
+
+        self.sql[start..end].to_owned()
+    }
+
     fn next_token(&mut self) -> Result<Option<Token>> {
         let token = match self.chars.next() {
             Some((pos, ch)) => match ch {
@@ -98,6 +121,9 @@ impl<'a> Tokenizer<'a> {
                 ';' => Token::Semicolon,
                 ',' => Token::Comma,
                 '*' => Token::Star,
+                '+' => Token::Plus,
+                '-' => Token::Minus,
+                '/' => Token::Division,
                 'a'..='z' | 'A'..='Z' | '_' => {
                     let word = self.word(pos);
                     if let Ok(keyword) = Keyword::from_str(&word) {
@@ -106,6 +132,7 @@ impl<'a> Tokenizer<'a> {
                         Token::Identifier(word)
                     }
                 }
+                '0'..='9' => Token::Number(self.number(pos)),
                 ch => return Err(Error::msg(format!("Unexpected character '{ch}'"))),
             },
             None => return Ok(None),

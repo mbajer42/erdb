@@ -3,12 +3,18 @@ use std::vec::IntoIter;
 
 use anyhow::{Error, Result};
 
-use self::ast::{ColumnDefinition, DataType, Expr, Projection, Statement, Table};
+use self::ast::{
+    BinaryOperator, ColumnDefinition, DataType, Expr, Projection, Statement, Table, UnaryOperator,
+};
 use self::token::{tokenize, Keyword, Token};
 
 pub mod ast;
 mod token;
 
+pub(in self::super) mod precedence {
+    pub const PLUS_MINUS: u8 = 10;
+    pub const PRODUCT_DIVISION: u8 = 20;
+}
 pub struct Parser {
     tokens: Peekable<IntoIter<Token>>,
 }
@@ -101,17 +107,11 @@ impl Parser {
                         // consume 'AS'
                         self.next_token();
                         let alias = self.parse_identifier()?;
-                        Ok(Projection::NamedExpr {
-                            expression: expr,
-                            alias,
-                        })
+                        Ok(Projection::NamedExpr { expr, alias })
                     }
                     Token::Identifier(_s) => {
                         let alias = self.parse_identifier()?;
-                        Ok(Projection::NamedExpr {
-                            expression: expr,
-                            alias,
-                        })
+                        Ok(Projection::NamedExpr { expr, alias })
                     }
                     _ => Ok(Projection::UnnamedExpr(expr)),
                 }
@@ -120,9 +120,80 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> Result<Expr> {
+        self.parse_expression_with_precedence(0)
+    }
+
+    fn parse_expression_with_precedence(&mut self, precedence: u8) -> Result<Expr> {
+        let mut expr = self.parse_prefix_expression()?;
+
+        loop {
+            let next_precedence = self.next_precedence();
+            if precedence >= next_precedence {
+                break;
+            }
+
+            expr = self.parse_infix_expression(expr, next_precedence)?;
+        }
+
+        Ok(expr)
+    }
+
+    fn parse_prefix_expression(&mut self) -> Result<Expr> {
         match self.next_token() {
-            Token::Identifier(s) => Ok(Expr::Identifier(s)),
+            Token::Identifier(id) => Ok(Expr::Identifier(id)),
+            Token::Number(num) => Ok(Expr::Number(num)),
+            Token::Minus => {
+                let expr = self.parse_expression_with_precedence(precedence::PLUS_MINUS)?;
+                Ok(Expr::Unary {
+                    op: UnaryOperator::Minus,
+                    expr: Box::new(expr),
+                })
+            }
+            Token::Plus => {
+                let expr = self.parse_expression_with_precedence(precedence::PLUS_MINUS)?;
+                Ok(Expr::Unary {
+                    op: UnaryOperator::Plus,
+                    expr: Box::new(expr),
+                })
+            }
+            Token::LeftParen => {
+                let expr = self.parse_expression()?;
+                self.expect(Token::RightParen)?;
+                Ok(Expr::Grouping(Box::new(expr)))
+            }
             found => self.wrong_token("an expression", found)?,
+        }
+    }
+
+    fn parse_infix_expression(&mut self, left: Expr, precedence: u8) -> Result<Expr> {
+        match self.next_token() {
+            token @ (Token::Plus | Token::Minus | Token::Star | Token::Division) => {
+                let right = self.parse_expression_with_precedence(precedence)?;
+                let binary_op = match token {
+                    Token::Plus => BinaryOperator::Plus,
+                    Token::Minus => BinaryOperator::Minus,
+                    Token::Star => BinaryOperator::Multiply,
+                    Token::Division => BinaryOperator::Divide,
+                    _ => unreachable!(),
+                };
+                Ok(Expr::Binary {
+                    left: Box::new(left),
+                    op: binary_op,
+                    right: Box::new(right),
+                })
+            }
+            found => Err(Error::msg(format!(
+                "Could not parse infix expression for {:?}",
+                found
+            ))),
+        }
+    }
+
+    fn next_precedence(&mut self) -> u8 {
+        match self.peek_token() {
+            Token::Plus | Token::Minus => precedence::PLUS_MINUS,
+            Token::Star | Token::Division => precedence::PRODUCT_DIVISION,
+            _ => 0,
         }
     }
 
@@ -253,7 +324,10 @@ pub fn parse_sql(sql: &str) -> Result<Statement> {
 
 #[cfg(test)]
 mod tests {
-    use super::ast::{ColumnDefinition, DataType, Expr, Projection, Statement, Table};
+    use super::ast::{
+        BinaryOperator, ColumnDefinition, DataType, Expr, Projection, Statement, Table,
+        UnaryOperator,
+    };
     use super::parse_sql;
 
     #[test]
@@ -326,16 +400,16 @@ mod tests {
             from table1 table_alias
         ";
 
-        let _statement = parse_sql(sql).unwrap();
-        let _expected_statement = Statement::Select {
+        let statement = parse_sql(sql).unwrap();
+        let expected_statement = Statement::Select {
             projections: vec![
                 Projection::UnnamedExpr(Expr::Identifier("id".to_owned())),
                 Projection::NamedExpr {
-                    expression: Expr::Identifier("name".to_owned()),
+                    expr: Expr::Identifier("name".to_owned()),
                     alias: "full_name".to_owned(),
                 },
                 Projection::NamedExpr {
-                    expression: Expr::Identifier("active".to_owned()),
+                    expr: Expr::Identifier("active".to_owned()),
                     alias: "is_active".to_owned(),
                 },
             ],
@@ -344,5 +418,40 @@ mod tests {
                 alias: Some("table_alias".to_owned()),
             },
         };
+
+        assert_eq!(statement, expected_statement);
+    }
+
+    #[test]
+    fn can_parse_arithemtic_expression() {
+        let sql = "
+            select -id + 2 * (3 + 5) from table_1
+        ";
+
+        let statement = parse_sql(sql).unwrap();
+        let expected_statement = Statement::Select {
+            projections: vec![Projection::UnnamedExpr(Expr::Binary {
+                left: Box::new(Expr::Unary {
+                    op: UnaryOperator::Minus,
+                    expr: Box::new(Expr::Identifier("id".to_owned())),
+                }),
+                op: BinaryOperator::Plus,
+                right: Box::new(Expr::Binary {
+                    left: Box::new(Expr::Number("2".to_owned())),
+                    op: BinaryOperator::Multiply,
+                    right: Box::new(Expr::Grouping(Box::new(Expr::Binary {
+                        left: Box::new(Expr::Number("3".to_owned())),
+                        op: BinaryOperator::Plus,
+                        right: Box::new(Expr::Number("5".to_owned())),
+                    }))),
+                }),
+            })],
+            from: Table::TableReference {
+                name: "table_1".to_owned(),
+                alias: None,
+            },
+        };
+
+        assert_eq!(statement, expected_statement);
     }
 }

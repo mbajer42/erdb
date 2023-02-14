@@ -16,7 +16,7 @@ use std::thread;
 
 use analyzer::Analyzer;
 use anyhow::{Context, Result};
-use buffer::buffer_manager::{BufferManager};
+use buffer::buffer_manager::BufferManager;
 use catalog::Catalog;
 use clap::{Arg, Command, Parser};
 use executors::ExecutorFactory;
