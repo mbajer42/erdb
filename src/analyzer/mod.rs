@@ -56,6 +56,7 @@ impl<'a> Analyzer<'a> {
                 let schema = self.catalog.get_schema(&name).unwrap().clone();
                 Ok(Table::TableReference { table_id, schema })
             }
+            ast::Table::EmptyTable => Ok(Table::EmptyTable),
         }
     }
 

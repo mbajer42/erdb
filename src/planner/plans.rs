@@ -13,4 +13,7 @@ pub enum Plan {
         child: Box<Plan>,
         output_schema: Schema,
     },
+    ValuesPlan {
+        values: Vec<Vec<Expr>>,
+    },
 }

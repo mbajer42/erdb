@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use self::projection_executor::ProjectionExecutor;
 use self::seq_scan_executor::SeqScanExecutor;
+use self::values_executor::ValuesExecutor;
 use crate::buffer::buffer_manager::BufferManager;
 use crate::catalog::schema::Schema;
 use crate::common::TableId;
@@ -13,6 +14,7 @@ use crate::tuple::Tuple;
 
 mod projection_executor;
 mod seq_scan_executor;
+mod values_executor;
 
 pub trait Executor {
     fn schema(&self) -> &Schema;
@@ -53,6 +55,7 @@ impl<'a> ExecutorFactory<'a> {
                     output_schema,
                 )))
             }
+            Plan::ValuesPlan { values } => Ok(Box::new(ValuesExecutor::new(values))),
         }
     }
 

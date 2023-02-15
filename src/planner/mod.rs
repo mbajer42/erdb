@@ -30,6 +30,9 @@ impl Planner {
                 table_id,
                 output_schema: schema,
             },
+            Table::EmptyTable => Plan::ValuesPlan {
+                values: vec![vec![]],
+            },
         }
     }
 

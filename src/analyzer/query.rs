@@ -1,8 +1,14 @@
+use lazy_static::lazy_static;
+
 use crate::catalog::schema::Schema;
 use crate::common::TableId;
 use crate::parser::ast::{self, BinaryOperator, UnaryOperator};
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
+
+lazy_static! {
+    pub static ref EMPTY_SCHEMA: Schema = Schema::new(vec![]);
+}
 
 #[derive(Debug, PartialEq)]
 pub enum QueryType {
@@ -62,6 +68,7 @@ impl Expr {
 #[derive(Debug, PartialEq)]
 pub enum Table {
     TableReference { table_id: TableId, schema: Schema },
+    EmptyTable,
 }
 
 impl Table {
@@ -71,6 +78,7 @@ impl Table {
                 table_id: _,
                 schema,
             } => schema,
+            Table::EmptyTable => &EMPTY_SCHEMA,
         }
     }
 }

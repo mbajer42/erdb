@@ -87,6 +87,7 @@ impl Display for Expr {
 #[derive(Debug, PartialEq)]
 pub enum Table {
     TableReference { name: String, alias: Option<String> },
+    EmptyTable,
 }
 
 #[derive(Debug, PartialEq)]

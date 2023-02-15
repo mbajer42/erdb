@@ -56,13 +56,17 @@ impl Parser {
     fn parse_select_statement(&mut self) -> Result<Statement> {
         let projections = self.parse_projections()?;
 
-        self.expect(Token::Keyword(Keyword::From))?;
         let from = self.parse_table()?;
 
         Ok(Statement::Select { projections, from })
     }
 
     fn parse_table(&mut self) -> Result<Table> {
+        if self.peek_token() == &Token::Semicolon || self.peek_token() == &Token::End {
+            return Ok(Table::EmptyTable);
+        }
+
+        self.expect(Token::Keyword(Keyword::From))?;
         let table_name = self.parse_identifier()?;
 
         let alias = if self.peek_token() == &Token::Keyword(Keyword::As) {
@@ -466,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn can_parse_arithemtic_expression() {
+    fn can_parse_arithmetic_expression() {
         let sql = "
             select -id + 2 * (3 + 5) from table_1
         ";
@@ -493,6 +497,36 @@ mod tests {
                 name: "table_1".to_owned(),
                 alias: None,
             },
+        };
+
+        assert_eq!(statement, expected_statement);
+    }
+
+    #[test]
+    fn can_parse_empty_tables() {
+        let sql = "
+            select -3 + 2 * (3 + 5);
+        ";
+
+        let statement = parse_sql(sql).unwrap();
+        let expected_statement = Statement::Select {
+            projections: vec![Projection::UnnamedExpr(Expr::Binary {
+                left: Box::new(Expr::Unary {
+                    op: UnaryOperator::Minus,
+                    expr: Box::new(Expr::Number("3".to_owned())),
+                }),
+                op: BinaryOperator::Plus,
+                right: Box::new(Expr::Binary {
+                    left: Box::new(Expr::Number("2".to_owned())),
+                    op: BinaryOperator::Multiply,
+                    right: Box::new(Expr::Grouping(Box::new(Expr::Binary {
+                        left: Box::new(Expr::Number("3".to_owned())),
+                        op: BinaryOperator::Plus,
+                        right: Box::new(Expr::Number("5".to_owned())),
+                    }))),
+                }),
+            })],
+            from: Table::EmptyTable,
         };
 
         assert_eq!(statement, expected_statement);
