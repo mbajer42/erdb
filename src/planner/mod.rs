@@ -1,5 +1,5 @@
 use self::plans::Plan;
-use crate::analyzer::query::{Expr, Query, Table};
+use crate::analyzer::query::{Expr, Query, Table, EMPTY_SCHEMA};
 use crate::catalog::schema::Schema;
 
 pub mod plans;
@@ -14,10 +14,18 @@ impl Planner {
     pub fn plan_query(&self, query: Query) -> Plan {
         let Query {
             query_type: _,
+            values,
             from,
             projections,
             output_schema,
         } = query;
+
+        if let Some(values) = values {
+            return Plan::ValuesPlan {
+                values,
+                output_schema,
+            };
+        }
 
         let plan = self.plan_table_reference(from);
 
@@ -32,6 +40,7 @@ impl Planner {
             },
             Table::EmptyTable => Plan::ValuesPlan {
                 values: vec![vec![]],
+                output_schema: EMPTY_SCHEMA.clone(),
             },
         }
     }

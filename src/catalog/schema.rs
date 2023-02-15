@@ -11,6 +11,8 @@ pub enum TypeId {
     Boolean,
     Integer,
     Text,
+    // still unknown, cannot be specified by a user, only used internally
+    Unknown,
 }
 
 impl FromStr for TypeId {
@@ -64,6 +66,10 @@ impl ColumnDefinition {
         self.type_id
     }
 
+    pub fn set_type_id(&mut self, type_id: TypeId) {
+        self.type_id = type_id;
+    }
+
     pub fn column_name(&self) -> &str {
         &self.column_name
     }
@@ -74,6 +80,10 @@ impl ColumnDefinition {
 
     pub fn not_null(&self) -> bool {
         self.not_null
+    }
+
+    pub fn set_not_null(&mut self, not_null: bool) {
+        self.not_null = not_null;
     }
 }
 

@@ -55,7 +55,10 @@ impl<'a> ExecutorFactory<'a> {
                     output_schema,
                 )))
             }
-            Plan::ValuesPlan { values } => Ok(Box::new(ValuesExecutor::new(values))),
+            Plan::ValuesPlan {
+                values,
+                output_schema,
+            } => Ok(Box::new(ValuesExecutor::new(values, output_schema))),
         }
     }
 

@@ -31,6 +31,7 @@ impl Value {
                 let val = std::str::from_utf8(slice).unwrap().to_owned();
                 Value::String(val)
             }
+            TypeId::Unknown => unreachable!(),
         }
     }
 

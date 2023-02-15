@@ -53,6 +53,8 @@ impl Display for BinaryOperator {
 pub enum Expr {
     Identifier(String),
     Number(String),
+    String(String),
+    Boolean(bool),
     // an expression in parenthesis, e.g. (1+1)
     Grouping(Box<Expr>),
     Binary {
@@ -74,6 +76,8 @@ impl Display for Expr {
         match self {
             Self::Identifier(id) => write!(f, "{}", id),
             Self::Number(num) => write!(f, "{}", num),
+            Self::String(s) => write!(f, "'{}'", s),
+            Self::Boolean(b) => write!(f, "{}", b),
             Self::Grouping(expr) => write!(f, "({})", expr),
             Expr::Binary { left, op, right } => write!(f, "{} {} {}", left, op, right),
             Expr::Unary { op, expr } => write!(f, "{}{}", op, expr),
@@ -104,6 +108,7 @@ pub enum Statement {
         columns: Vec<ColumnDefinition>,
     },
     Select {
+        values: Option<Vec<Vec<Expr>>>,
         projections: Vec<Projection>,
         from: Table,
     },

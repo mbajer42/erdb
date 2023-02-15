@@ -47,10 +47,47 @@ impl Parser {
             Token::Keyword(keyword) => match keyword {
                 Keyword::Create => self.parse_create_statement(),
                 Keyword::Select => self.parse_select_statement(),
+                Keyword::Values => self.parse_values(),
                 found => self.wrong_keyword("a statement", found)?,
             },
             found => self.wrong_token("a statement", found)?,
         }
+    }
+
+    fn parse_values(&mut self) -> Result<Statement> {
+        let mut values = vec![];
+        loop {
+            self.expect(Token::LeftParen)?;
+
+            let mut current_values = vec![];
+            loop {
+                current_values.push(self.parse_expression()?);
+
+                match self.next_token() {
+                    Token::Comma => continue,
+                    Token::RightParen => break,
+                    found => {
+                        self.wrong_token("',' followed by another expression or ')'", found)?
+                    }
+                }
+            }
+            values.push(current_values);
+
+            match self.next_token() {
+                Token::Comma => continue,
+                Token::Semicolon | Token::End => break,
+                found => self.wrong_token(
+                    "Expected ',' followed by more expressions or end of statement",
+                    found,
+                )?,
+            }
+        }
+
+        Ok(Statement::Select {
+            values: Some(values),
+            projections: vec![],
+            from: Table::EmptyTable,
+        })
     }
 
     fn parse_select_statement(&mut self) -> Result<Statement> {
@@ -58,7 +95,11 @@ impl Parser {
 
         let from = self.parse_table()?;
 
-        Ok(Statement::Select { projections, from })
+        Ok(Statement::Select {
+            values: None,
+            projections,
+            from,
+        })
     }
 
     fn parse_table(&mut self) -> Result<Table> {
@@ -147,6 +188,9 @@ impl Parser {
         match self.next_token() {
             Token::Identifier(id) => Ok(Expr::Identifier(id)),
             Token::Number(num) => Ok(Expr::Number(num)),
+            Token::QuotedString(s) => Ok(Expr::String(s)),
+            Token::Keyword(Keyword::True) => Ok(Expr::Boolean(true)),
+            Token::Keyword(Keyword::False) => Ok(Expr::Boolean(false)),
             Token::Minus => {
                 let expr = self.parse_expression_with_precedence(precedence::PLUS_MINUS)?;
                 Ok(Expr::Unary {
@@ -233,7 +277,7 @@ impl Parser {
                 Keyword::Table => self.parse_create_table_statement(),
                 found => self.wrong_keyword("a create statement", found)?,
             },
-            found => self.wrong_token("a create stament", found)?,
+            found => self.wrong_token("a create statement", found)?,
         }
     }
 
@@ -430,6 +474,7 @@ mod tests {
 
         let statement = parse_sql(sql).unwrap();
         let expected_statement = Statement::Select {
+            values: None,
             projections: vec![Projection::Wildcard],
             from: Table::TableReference {
                 name: "accounts".to_owned(),
@@ -449,6 +494,7 @@ mod tests {
 
         let statement = parse_sql(sql).unwrap();
         let expected_statement = Statement::Select {
+            values: None,
             projections: vec![
                 Projection::UnnamedExpr(Expr::Identifier("id".to_owned())),
                 Projection::NamedExpr {
@@ -477,6 +523,7 @@ mod tests {
 
         let statement = parse_sql(sql).unwrap();
         let expected_statement = Statement::Select {
+            values: None,
             projections: vec![Projection::UnnamedExpr(Expr::Binary {
                 left: Box::new(Expr::Unary {
                     op: UnaryOperator::Minus,
@@ -510,6 +557,7 @@ mod tests {
 
         let statement = parse_sql(sql).unwrap();
         let expected_statement = Statement::Select {
+            values: None,
             projections: vec![Projection::UnnamedExpr(Expr::Binary {
                 left: Box::new(Expr::Unary {
                     op: UnaryOperator::Minus,
@@ -526,6 +574,33 @@ mod tests {
                     }))),
                 }),
             })],
+            from: Table::EmptyTable,
+        };
+
+        assert_eq!(statement, expected_statement);
+    }
+
+    #[test]
+    fn can_parse_values() {
+        let sql = "
+            values (1, 'foo', true), (2, 'bar', false)
+        ";
+
+        let statement = parse_sql(sql).unwrap();
+        let expected_statement = Statement::Select {
+            values: Some(vec![
+                vec![
+                    Expr::Number("1".to_owned()),
+                    Expr::String("foo".to_owned()),
+                    Expr::Boolean(true),
+                ],
+                vec![
+                    Expr::Number("2".to_owned()),
+                    Expr::String("bar".to_owned()),
+                    Expr::Boolean(false),
+                ],
+            ]),
+            projections: vec![],
             from: Table::EmptyTable,
         };
 

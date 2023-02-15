@@ -8,6 +8,7 @@ pub enum Keyword {
     As,
     Boolean,
     Create,
+    False,
     From,
     Integer,
     Is,
@@ -16,6 +17,8 @@ pub enum Keyword {
     Select,
     Table,
     Text,
+    True,
+    Values,
 }
 
 impl FromStr for Keyword {
@@ -26,6 +29,7 @@ impl FromStr for Keyword {
             "as" => Self::As,
             "boolean" => Self::Boolean,
             "create" => Self::Create,
+            "false" => Self::False,
             "from" => Self::From,
             "integer" => Self::Integer,
             "is" => Self::Is,
@@ -34,6 +38,8 @@ impl FromStr for Keyword {
             "select" => Self::Select,
             "table" => Self::Table,
             "text" => Self::Text,
+            "true" => Self::True,
+            "values" => Self::Values,
             _ => return Err(()),
         };
         Ok(res)
@@ -48,6 +54,8 @@ pub enum Token {
     Keyword(Keyword),
     /// a number, like 123
     Number(String),
+    /// a quoted string
+    QuotedString(String),
     // Comma ','
     Comma,
     // Left parenthesis '('
@@ -114,6 +122,19 @@ impl<'a> Tokenizer<'a> {
         self.sql[start..end].to_owned()
     }
 
+    fn quoted_string(&mut self, start: usize) -> Result<String> {
+        for (pos, ch) in self.chars.by_ref() {
+            if ch == '\'' {
+                return Ok(self.sql[start..pos].to_owned());
+            }
+        }
+
+        Err(Error::msg(format!(
+            "Unterminated string literal {}",
+            &self.sql[start..]
+        )))
+    }
+
     fn next_token(&mut self) -> Result<Option<Token>> {
         let token = match self.chars.next() {
             Some((pos, ch)) => match ch {
@@ -126,6 +147,7 @@ impl<'a> Tokenizer<'a> {
                 '+' => Token::Plus,
                 '-' => Token::Minus,
                 '/' => Token::Division,
+                '\'' => Token::QuotedString(self.quoted_string(pos + 1)?),
                 'a'..='z' | 'A'..='Z' | '_' => {
                     let word = self.word(pos);
                     if let Ok(keyword) = Keyword::from_str(&word) {
@@ -229,6 +251,35 @@ mod tests {
             Token::Identifier("email".to_owned()),
             Token::Keyword(Keyword::From),
             Token::Identifier("tablename".to_owned()),
+        ];
+
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn can_tokenize_values() {
+        let sql = "
+            values (1, 'foo', true), (2, 'bar', false)
+        ";
+
+        let tokens = tokenize(sql).expect("Expected to tokenize without any errors");
+        let expected = vec![
+            Token::Keyword(Keyword::Values),
+            Token::LeftParen,
+            Token::Number("1".to_owned()),
+            Token::Comma,
+            Token::QuotedString("foo".to_owned()),
+            Token::Comma,
+            Token::Keyword(Keyword::True),
+            Token::RightParen,
+            Token::Comma,
+            Token::LeftParen,
+            Token::Number("2".to_owned()),
+            Token::Comma,
+            Token::QuotedString("bar".to_owned()),
+            Token::Comma,
+            Token::Keyword(Keyword::False),
+            Token::RightParen,
         ];
 
         assert_eq!(tokens, expected);

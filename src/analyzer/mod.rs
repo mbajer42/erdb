@@ -21,12 +21,25 @@ impl<'a> Analyzer<'a> {
 
     pub fn analyze(&self, query: ast::Statement) -> Result<Query> {
         match query {
-            Statement::Select { projections, from } => self.analyze_select(projections, from),
+            Statement::Select {
+                values,
+                projections,
+                from,
+            } => self.analyze_select(values, projections, from),
             _ => unreachable!(),
         }
     }
 
-    fn analyze_select(&self, projections: Vec<ast::Projection>, from: ast::Table) -> Result<Query> {
+    fn analyze_select(
+        &self,
+        values: Option<Vec<Vec<ast::Expr>>>,
+        projections: Vec<ast::Projection>,
+        from: ast::Table,
+    ) -> Result<Query> {
+        if let Some(values) = values {
+            return Self::analyze_values(values);
+        }
+
         let table = self.analyze_table(from)?;
         let projections_with_specification = self.analyze_projections(projections, &table)?;
 
@@ -40,8 +53,70 @@ impl<'a> Analyzer<'a> {
 
         Ok(Query {
             query_type: QueryType::Select,
+            values: None,
             from: table,
             projections,
+            output_schema: Schema::new(output_columns),
+        })
+    }
+
+    fn analyze_values(values: Vec<Vec<ast::Expr>>) -> Result<Query> {
+        let mut expressions = vec![];
+        let mut output_columns = vec![];
+
+        let mut first_row_added = false;
+        for (row, current_values) in values.into_iter().enumerate() {
+            let mut current_expressions = vec![];
+            for (col, value) in current_values.into_iter().enumerate() {
+                let (expr, type_id) = Self::analyze_expression(value, &Table::EmptyTable)?;
+
+                if !first_row_added {
+                    let column_name = format!("col_{}", col);
+                    let not_null = expr != Expr::Null;
+                    output_columns.push(ColumnDefinition::new(
+                        type_id,
+                        column_name,
+                        col as u8,
+                        not_null,
+                    ));
+                } else if let Some(col_def) = output_columns.get_mut(col) {
+                    if col_def.type_id() == TypeId::Unknown {
+                        // first value was null
+                        col_def.set_type_id(type_id);
+                    } else if type_id == TypeId::Unknown {
+                        // current value is null, so column is nullable
+                        col_def.set_not_null(false);
+                    } else if col_def.type_id() != type_id {
+                        return Err(Error::msg(format!(
+                            "Type mismatch in row {}. Expected '{}' but found '{}'",
+                            row,
+                            col_def.type_id(),
+                            type_id
+                        )));
+                    }
+                }
+
+                current_expressions.push(expr);
+            }
+
+            if first_row_added && output_columns.len() != current_expressions.len() {
+                return Err(Error::msg(format!(
+                    "Expected {} values, but {} row has {}.",
+                    output_columns.len(),
+                    row,
+                    current_expressions.len()
+                )));
+            }
+
+            first_row_added = true;
+            expressions.push(current_expressions);
+        }
+
+        Ok(Query {
+            query_type: QueryType::Select,
+            values: Some(expressions),
+            from: Table::EmptyTable,
+            projections: vec![],
             output_schema: Schema::new(output_columns),
         })
     }
@@ -126,6 +201,8 @@ impl<'a> Analyzer<'a> {
                 let num = number.parse::<i32>()?;
                 Ok((Expr::Integer(num), TypeId::Integer))
             }
+            ast::Expr::String(s) => Ok((Expr::String(s), TypeId::Text)),
+            ast::Expr::Boolean(val) => Ok((Expr::Boolean(val), TypeId::Boolean)),
             ast::Expr::Grouping(expr) => Self::analyze_expression(*expr, scope),
             ast::Expr::Binary { left, op, right } => {
                 let (left, left_type) = Self::analyze_expression(*left, scope)?;
@@ -176,8 +253,7 @@ impl<'a> Analyzer<'a> {
                 let (expr, _) = Self::analyze_expression(*expr, scope)?;
                 Ok((Expr::IsNotNull(Box::new(expr)), TypeId::Boolean))
             }
-            // todo: boolean is of course not the actual type
-            ast::Expr::Null => Ok((Expr::Null, TypeId::Boolean)),
+            ast::Expr::Null => Ok((Expr::Null, TypeId::Unknown)),
         }
     }
 }
@@ -219,6 +295,7 @@ mod tests {
 
         let expected_query = Query {
             query_type: QueryType::Select,
+            values: None,
             from: Table::TableReference { table_id, schema },
             projections: vec![Expr::ColumnReference(0), Expr::ColumnReference(1)],
             output_schema: Schema::new(vec![
@@ -256,6 +333,7 @@ mod tests {
 
         let expected_query = Query {
             query_type: QueryType::Select,
+            values: None,
             from: Table::TableReference { table_id, schema },
             projections: vec![
                 Expr::Unary {
@@ -281,6 +359,50 @@ mod tests {
                 ColumnDefinition::new(TypeId::Integer, "negative_id".to_owned(), 0, false),
                 ColumnDefinition::new(TypeId::Integer, "id + 1".to_owned(), 1, false),
                 ColumnDefinition::new(TypeId::Integer, "2 * (3 + 5)".to_owned(), 2, false),
+            ]),
+        };
+
+        assert_eq!(query, expected_query);
+    }
+
+    #[test]
+    fn can_analyze_values() {
+        let data_dir = tempdir().unwrap();
+        let file_manager = FileManager::new(data_dir.path()).unwrap();
+        let buffer_manager = BufferManager::new(file_manager, 1);
+
+        let sql = "
+            values (1, NULL, 'foo', true), (2, 'bar', NULL, false);
+        ";
+        let statement = parse_sql(sql).unwrap();
+
+        let catalog = Catalog::new(&buffer_manager, true).unwrap();
+        let analyzer = Analyzer::new(&catalog);
+        let query = analyzer.analyze(statement).unwrap();
+
+        let expected_query = Query {
+            query_type: QueryType::Select,
+            values: Some(vec![
+                vec![
+                    Expr::Integer(1),
+                    Expr::Null,
+                    Expr::String("foo".to_owned()),
+                    Expr::Boolean(true),
+                ],
+                vec![
+                    Expr::Integer(2),
+                    Expr::String("bar".to_owned()),
+                    Expr::Null,
+                    Expr::Boolean(false),
+                ],
+            ]),
+            from: Table::EmptyTable,
+            projections: vec![],
+            output_schema: Schema::new(vec![
+                ColumnDefinition::new(TypeId::Integer, "col_0".to_owned(), 0, true),
+                ColumnDefinition::new(TypeId::Text, "col_1".to_owned(), 1, false),
+                ColumnDefinition::new(TypeId::Text, "col_2".to_owned(), 2, false),
+                ColumnDefinition::new(TypeId::Boolean, "col_3".to_owned(), 3, true),
             ]),
         };
 

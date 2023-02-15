@@ -15,5 +15,6 @@ pub enum Plan {
     },
     ValuesPlan {
         values: Vec<Vec<Expr>>,
+        output_schema: Schema,
     },
 }

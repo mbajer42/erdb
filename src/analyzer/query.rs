@@ -19,6 +19,8 @@ pub enum QueryType {
 pub enum Expr {
     ColumnReference(u8),
     Integer(i32),
+    String(String),
+    Boolean(bool),
     Null,
     Unary {
         op: ast::UnaryOperator,
@@ -38,6 +40,8 @@ impl Expr {
         match self {
             Expr::ColumnReference(col) => tuple.values().get(*col as usize).unwrap().clone(),
             Expr::Integer(number) => Value::Integer(*number),
+            Expr::String(s) => Value::String(s.clone()),
+            Expr::Boolean(val) => Value::Boolean(*val),
             Expr::Unary { op, expr } => match op {
                 UnaryOperator::Plus => expr.evaluate(tuple),
                 UnaryOperator::Minus => Value::Integer(-expr.evaluate(tuple).as_i32()),
@@ -86,6 +90,8 @@ impl Table {
 #[derive(Debug, PartialEq)]
 pub struct Query {
     pub query_type: QueryType,
+    /// VALUES
+    pub values: Option<Vec<Vec<Expr>>>,
     /// FROM clause
     pub from: Table,
     /// SELECT list

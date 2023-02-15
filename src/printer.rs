@@ -21,6 +21,7 @@ impl<'a> Printer<'a> {
                 TypeId::Boolean => col_name_size.max("false".chars().count()),
                 TypeId::Integer => col_name_size.max(10),
                 TypeId::Text => col_name_size.max(25),
+                TypeId::Unknown => col_name_size.max("NULL".chars().count()),
             };
             column_widths.push(col_width);
         }
