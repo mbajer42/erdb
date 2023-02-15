@@ -135,7 +135,7 @@ fn handle_sql_statement(
             let mut executor_factory = ExecutorFactory::new(buffer_manager);
             let executor = executor_factory.create_executor(plan)?;
             let mut printer = Printer::new(executor);
-            printer.print_all_tupes(writer)?;
+            printer.print_all_tuples(writer)?;
         }
     }
     Ok(())

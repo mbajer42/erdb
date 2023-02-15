@@ -59,7 +59,7 @@ impl<'a> Printer<'a> {
         Ok(())
     }
 
-    pub fn print_all_tupes(&mut self, writer: &mut BufWriter<&TcpStream>) -> Result<()> {
+    pub fn print_all_tuples(&mut self, writer: &mut BufWriter<&TcpStream>) -> Result<()> {
         self.print_header(writer)?;
 
         while let Some(tuple) = self.executor.next() {
