@@ -13,6 +13,7 @@ lazy_static! {
 #[derive(Debug, PartialEq)]
 pub enum QueryType {
     Select,
+    Insert,
 }
 
 #[derive(Debug, PartialEq)]
@@ -98,6 +99,10 @@ pub struct Query {
     pub projections: Vec<Expr>,
     /// schema of the query output
     pub output_schema: Schema,
+    /// target table id of output, only for INSERT/DELETE/UPDATE
+    pub target: Option<TableId>,
+    /// target schema, only for INSERT/DELETE/UPDATE
+    pub target_schema: Option<Schema>,
 }
 
 #[cfg(test)]

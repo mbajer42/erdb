@@ -17,4 +17,9 @@ pub enum Plan {
         values: Vec<Vec<Expr>>,
         output_schema: Schema,
     },
+    InsertPlan {
+        target: TableId,
+        target_schema: Schema,
+        child: Box<Plan>,
+    },
 }

@@ -112,4 +112,8 @@ pub enum Statement {
         projections: Vec<Projection>,
         from: Table,
     },
+    Insert {
+        into: Table,
+        select: Box<Statement>,
+    },
 }

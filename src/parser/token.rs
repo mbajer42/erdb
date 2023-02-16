@@ -10,7 +10,9 @@ pub enum Keyword {
     Create,
     False,
     From,
+    Insert,
     Integer,
+    Into,
     Is,
     Not,
     Null,
@@ -31,7 +33,9 @@ impl FromStr for Keyword {
             "create" => Self::Create,
             "false" => Self::False,
             "from" => Self::From,
+            "insert" => Self::Insert,
             "integer" => Self::Integer,
+            "into" => Self::Into,
             "is" => Self::Is,
             "not" => Self::Not,
             "null" => Self::Null,
@@ -279,6 +283,38 @@ mod tests {
             Token::QuotedString("bar".to_owned()),
             Token::Comma,
             Token::Keyword(Keyword::False),
+            Token::RightParen,
+        ];
+
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn can_tokenize_insert_into_table() {
+        let sql = "
+            insert into table_name values (1, 'foo', true), (2, 'bar', NULL)
+        ";
+
+        let tokens = tokenize(sql).expect("Expected to tokenize without any errors");
+        let expected = vec![
+            Token::Keyword(Keyword::Insert),
+            Token::Keyword(Keyword::Into),
+            Token::Identifier("table_name".to_owned()),
+            Token::Keyword(Keyword::Values),
+            Token::LeftParen,
+            Token::Number("1".to_owned()),
+            Token::Comma,
+            Token::QuotedString("foo".to_owned()),
+            Token::Comma,
+            Token::Keyword(Keyword::True),
+            Token::RightParen,
+            Token::Comma,
+            Token::LeftParen,
+            Token::Number("2".to_owned()),
+            Token::Comma,
+            Token::QuotedString("bar".to_owned()),
+            Token::Comma,
+            Token::Keyword(Keyword::Null),
             Token::RightParen,
         ];
 

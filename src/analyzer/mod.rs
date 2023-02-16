@@ -26,8 +26,54 @@ impl<'a> Analyzer<'a> {
                 projections,
                 from,
             } => self.analyze_select(values, projections, from),
+            Statement::Insert { into, select } => self.analyze_insert(into, *select),
             _ => unreachable!(),
         }
+    }
+
+    fn analyze_insert(&self, into: ast::Table, select: Statement) -> Result<Query> {
+        let (table_id, schema) = match self.analyze_table(into)? {
+            Table::TableReference { table_id, schema } => (table_id, schema),
+            _ => unreachable!(),
+        };
+
+        let mut query = self.analyze(select)?;
+
+        if schema.columns().len() != query.output_schema.columns().len() {
+            return Err(Error::msg(format!(
+                "Insert target has {} columns but only {} were provided",
+                schema.columns().len(),
+                query.output_schema.columns().len()
+            )));
+        }
+        for (col_offset, (target_col, value_col)) in schema
+            .columns()
+            .iter()
+            .zip(query.output_schema.columns())
+            .enumerate()
+        {
+            if target_col.type_id() != value_col.type_id() && value_col.type_id() != TypeId::Unknown
+            {
+                return Err(Error::msg(format!(
+                    "Column {} is of type {}, but value is of type {}",
+                    col_offset,
+                    target_col.type_id(),
+                    value_col.type_id()
+                )));
+            }
+            if target_col.not_null() && !value_col.not_null() {
+                return Err(Error::msg(format!(
+                    "Cannot insert NULL into column {}",
+                    col_offset
+                )));
+            }
+        }
+
+        query.query_type = QueryType::Insert;
+        query.target = Some(table_id);
+        query.target_schema = Some(schema);
+
+        Ok(query)
     }
 
     fn analyze_select(
@@ -57,6 +103,8 @@ impl<'a> Analyzer<'a> {
             from: table,
             projections,
             output_schema: Schema::new(output_columns),
+            target_schema: None,
+            target: None,
         })
     }
 
@@ -118,6 +166,8 @@ impl<'a> Analyzer<'a> {
             from: Table::EmptyTable,
             projections: vec![],
             output_schema: Schema::new(output_columns),
+            target_schema: None,
+            target: None,
         })
     }
 
@@ -302,6 +352,8 @@ mod tests {
                 ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, false),
                 ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, false),
             ]),
+            target_schema: None,
+            target: None,
         };
 
         assert_eq!(query, expected_query);
@@ -360,6 +412,8 @@ mod tests {
                 ColumnDefinition::new(TypeId::Integer, "id + 1".to_owned(), 1, false),
                 ColumnDefinition::new(TypeId::Integer, "2 * (3 + 5)".to_owned(), 2, false),
             ]),
+            target_schema: None,
+            target: None,
         };
 
         assert_eq!(query, expected_query);
@@ -404,6 +458,8 @@ mod tests {
                 ColumnDefinition::new(TypeId::Text, "col_2".to_owned(), 2, false),
                 ColumnDefinition::new(TypeId::Boolean, "col_3".to_owned(), 3, true),
             ]),
+            target_schema: None,
+            target: None,
         };
 
         assert_eq!(query, expected_query);

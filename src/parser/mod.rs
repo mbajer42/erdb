@@ -48,10 +48,37 @@ impl Parser {
                 Keyword::Create => self.parse_create_statement(),
                 Keyword::Select => self.parse_select_statement(),
                 Keyword::Values => self.parse_values(),
+                Keyword::Insert => self.parse_insert(),
                 found => self.wrong_keyword("a statement", found)?,
             },
             found => self.wrong_token("a statement", found)?,
         }
+    }
+
+    fn parse_insert(&mut self) -> Result<Statement> {
+        self.expect(Token::Keyword(Keyword::Into))?;
+
+        let table_name = self.parse_identifier()?;
+        let table = Table::TableReference {
+            name: table_name,
+            alias: None,
+        };
+
+        let select = match self.next_token() {
+            Token::Keyword(Keyword::Values) => self.parse_values()?,
+            Token::Keyword(Keyword::Select) => self.parse_select_statement()?,
+            found => {
+                return Err(Error::msg(format!(
+                    "Expected a query after `INSERT INTO <table_name>`, but found {:?}",
+                    found
+                )))
+            }
+        };
+
+        Ok(Statement::Insert {
+            into: table,
+            select: Box::new(select),
+        })
     }
 
     fn parse_values(&mut self) -> Result<Statement> {
@@ -602,6 +629,64 @@ mod tests {
             ]),
             projections: vec![],
             from: Table::EmptyTable,
+        };
+
+        assert_eq!(statement, expected_statement);
+    }
+
+    #[test]
+    fn can_parse_insert_values_into_table() {
+        let sql = "
+            insert into table_name values (1, 'foo', true), (2, 'bar', false)
+        ";
+
+        let statement = parse_sql(sql).unwrap();
+        let expected_statement = Statement::Insert {
+            into: Table::TableReference {
+                name: "table_name".to_owned(),
+                alias: None,
+            },
+            select: Box::new(Statement::Select {
+                values: Some(vec![
+                    vec![
+                        Expr::Number("1".to_owned()),
+                        Expr::String("foo".to_owned()),
+                        Expr::Boolean(true),
+                    ],
+                    vec![
+                        Expr::Number("2".to_owned()),
+                        Expr::String("bar".to_owned()),
+                        Expr::Boolean(false),
+                    ],
+                ]),
+                projections: vec![],
+                from: Table::EmptyTable,
+            }),
+        };
+
+        assert_eq!(statement, expected_statement);
+    }
+
+    #[test]
+    fn can_parse_insert_select_into_table() {
+        let sql = "
+            insert into new_table select * from old_table
+        ";
+
+        let statement = parse_sql(sql).unwrap();
+        let expected_statement = Statement::Insert {
+            into: Table::TableReference {
+                name: "new_table".to_owned(),
+                alias: None,
+            },
+            select: Box::new(Statement::Select {
+                values: None,
+                projections: vec![Projection::Wildcard],
+                from: Table::TableReference {
+                    name: "old_table".to_owned(),
+                    alias: None,
+                },
+            }),
         };
 
         assert_eq!(statement, expected_statement);
