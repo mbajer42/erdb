@@ -13,6 +13,7 @@ mod token;
 pub(in self::super) mod precedence {
     pub const NOT_NULL: u8 = 11;
     pub const IS_NULL: u8 = 12;
+    pub const COMPARISON: u8 = 13;
     pub const PLUS_MINUS: u8 = 14;
     pub const PRODUCT_DIVISION: u8 = 15;
 }
@@ -244,13 +245,28 @@ impl Parser {
 
     fn parse_infix_expression(&mut self, left: Expr, precedence: u8) -> Result<Expr> {
         match self.next_token() {
-            token @ (Token::Plus | Token::Minus | Token::Star | Token::Division) => {
+            token @ (Token::Plus
+            | Token::Minus
+            | Token::Star
+            | Token::Division
+            | Token::Eq
+            | Token::NotEq
+            | Token::Less
+            | Token::LessEq
+            | Token::Greater
+            | Token::GreaterEq) => {
                 let right = self.parse_expression_with_precedence(precedence)?;
                 let binary_op = match token {
                     Token::Plus => BinaryOperator::Plus,
                     Token::Minus => BinaryOperator::Minus,
                     Token::Star => BinaryOperator::Multiply,
                     Token::Division => BinaryOperator::Divide,
+                    Token::Eq => BinaryOperator::Eq,
+                    Token::NotEq => BinaryOperator::NotEq,
+                    Token::Less => BinaryOperator::Less,
+                    Token::LessEq => BinaryOperator::LessEq,
+                    Token::Greater => BinaryOperator::Greater,
+                    Token::GreaterEq => BinaryOperator::GreaterEq,
                     _ => unreachable!(),
                 };
                 Ok(Expr::Binary {
@@ -284,6 +300,12 @@ impl Parser {
         match self.peek_token() {
             Token::Plus | Token::Minus => precedence::PLUS_MINUS,
             Token::Star | Token::Division => precedence::PRODUCT_DIVISION,
+            Token::Eq
+            | Token::NotEq
+            | Token::Less
+            | Token::LessEq
+            | Token::Greater
+            | Token::GreaterEq => precedence::COMPARISON,
             Token::Keyword(Keyword::Is)
                 if self.peek_keywords_match(&[Keyword::Is, Keyword::Null]) =>
             {
@@ -574,6 +596,37 @@ mod tests {
         };
 
         assert_eq!(statement, expected_statement);
+    }
+
+    #[test]
+    fn can_parse_comparisons_eq() {
+        let comparison_operators = [
+            BinaryOperator::Eq,
+            BinaryOperator::NotEq,
+            BinaryOperator::Less,
+            BinaryOperator::LessEq,
+            BinaryOperator::Greater,
+            BinaryOperator::GreaterEq,
+        ];
+
+        for op in comparison_operators {
+            let sql = format!("select id {} 42 from table_name;", op);
+            let statement = parse_sql(&sql).unwrap();
+            let expected_statement = Statement::Select {
+                values: None,
+                projections: vec![Projection::UnnamedExpr(Expr::Binary {
+                    left: Box::new(Expr::Identifier("id".to_owned())),
+                    op,
+                    right: Box::new(Expr::Number("42".to_owned())),
+                })],
+                from: Table::TableReference {
+                    name: "table_name".to_owned(),
+                    alias: None,
+                },
+            };
+
+            assert_eq!(statement, expected_statement);
+        }
     }
 
     #[test]

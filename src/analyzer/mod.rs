@@ -2,7 +2,7 @@ use anyhow::{Error, Result};
 
 use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
 use crate::catalog::Catalog;
-use crate::parser::ast::{self, Projection, Statement};
+use crate::parser::ast::{self, BinaryOperator, Projection, Statement};
 
 pub mod query;
 
@@ -257,26 +257,37 @@ impl<'a> Analyzer<'a> {
             ast::Expr::Binary { left, op, right } => {
                 let (left, left_type) = Self::analyze_expression(*left, scope)?;
                 let (right, right_type) = Self::analyze_expression(*right, scope)?;
-                if left_type != TypeId::Integer {
-                    Err(Error::msg(format!(
-                        "Cannot apply '{}' to type {}",
-                        op, left_type
-                    )))
-                } else if right_type != TypeId::Integer {
-                    Err(Error::msg(format!(
-                        "Cannot apply '{}' to type {}",
-                        op, right_type
-                    )))
-                } else {
-                    Ok((
-                        Expr::Binary {
-                            left: Box::new(left),
-                            op,
-                            right: Box::new(right),
-                        },
-                        left_type,
-                    ))
+                match op {
+                    BinaryOperator::Plus
+                    | BinaryOperator::Minus
+                    | BinaryOperator::Multiply
+                    | BinaryOperator::Divide => {
+                        if left_type != TypeId::Integer || right_type != TypeId::Integer {
+                            return Err(Error::msg(format!("Can apply '{}' only to integers. Left side is of type {}, right side is of type {}", op, left_type, right_type)));
+                        }
+                    }
+                    BinaryOperator::Eq
+                    | BinaryOperator::NotEq
+                    | BinaryOperator::Less
+                    | BinaryOperator::LessEq
+                    | BinaryOperator::Greater
+                    | BinaryOperator::GreaterEq => {
+                        if left_type != right_type
+                            && left_type != TypeId::Unknown
+                            && right_type != TypeId::Unknown
+                        {
+                            return Err(Error::msg(format!("Can '{}' compare only values of same type. Left side is {}, right side is {}", op, left_type, right_type)));
+                        }
+                    }
                 }
+                Ok((
+                    Expr::Binary {
+                        left: Box::new(left),
+                        op,
+                        right: Box::new(right),
+                    },
+                    left_type,
+                ))
             }
             ast::Expr::Unary { op, expr } => {
                 let (expr, type_id) = Self::analyze_expression(*expr, scope)?;

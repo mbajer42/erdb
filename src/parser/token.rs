@@ -60,23 +60,37 @@ pub enum Token {
     Number(String),
     /// a quoted string
     QuotedString(String),
-    // Comma ','
+    /// Comma ','
     Comma,
-    // Left parenthesis '('
+    /// Left parenthesis '('
     LeftParen,
-    // Right parenthesis ')'
+    /// Right parenthesis ')'
     RightParen,
-    // Semicolon ';'
+    /// Semicolon ';'
     Semicolon,
-    // star '*'
+    /// star '*'
     Star,
-    // Minus '-'
+    /// Minus '-'
     Minus,
-    // Plus '+'
+    /// Plus '+'
     Plus,
-    // Division '/'
+    /// Division '/'
     Division,
-    // not a token, just end of query
+    /// Equal '='
+    Eq,
+    /// Not equal (either '<>' or '!=')
+    NotEq,
+    /// Less than '<'
+    Less,
+    /// Greater than '>'
+    Greater,
+    /// Less than or equal '<='
+    LessEq,
+    /// Greater than or equal '>='
+    GreaterEq,
+    /// Exclamation mark '!'
+    Exclamation,
+    /// not a token, just end of query
     End,
 }
 
@@ -101,10 +115,10 @@ impl<'a> Tokenizer<'a> {
                 || ('0'..='9').contains(ch)
                 || *ch == '_'
             {
+                end = *pos + 1;
                 self.chars.next();
                 continue;
             } else {
-                end = *pos;
                 break;
             }
         }
@@ -115,10 +129,10 @@ impl<'a> Tokenizer<'a> {
         let mut end = start + 1;
         while let Some((pos, ch)) = self.chars.peek() {
             if ('0'..='9').contains(ch) {
+                end = *pos + 1;
                 self.chars.next();
                 continue;
             } else {
-                end = *pos;
                 break;
             }
         }
@@ -151,6 +165,32 @@ impl<'a> Tokenizer<'a> {
                 '+' => Token::Plus,
                 '-' => Token::Minus,
                 '/' => Token::Division,
+                '!' => match self.chars.peek() {
+                    Some((_pos, '=')) => {
+                        self.chars.next();
+                        Token::NotEq
+                    }
+                    _ => Token::Exclamation,
+                },
+                '=' => Token::Eq,
+                '<' => match self.chars.peek() {
+                    Some((_pos, '>')) => {
+                        self.chars.next();
+                        Token::NotEq
+                    }
+                    Some((_pos, '=')) => {
+                        self.chars.next();
+                        Token::LessEq
+                    }
+                    _ => Token::Less,
+                },
+                '>' => match self.chars.peek() {
+                    Some((_pos, '=')) => {
+                        self.chars.next();
+                        Token::GreaterEq
+                    }
+                    _ => Token::Greater,
+                },
                 '\'' => Token::QuotedString(self.quoted_string(pos + 1)?),
                 'a'..='z' | 'A'..='Z' | '_' => {
                     let word = self.word(pos);

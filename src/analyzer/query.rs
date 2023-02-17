@@ -2,7 +2,7 @@ use lazy_static::lazy_static;
 
 use crate::catalog::schema::Schema;
 use crate::common::TableId;
-use crate::parser::ast::{self, BinaryOperator, UnaryOperator};
+use crate::parser::ast::{self, UnaryOperator};
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
 
@@ -48,14 +48,9 @@ impl Expr {
                 UnaryOperator::Minus => Value::Integer(-expr.evaluate(tuple).as_i32()),
             },
             Expr::Binary { left, op, right } => {
-                let left = left.evaluate(tuple).as_i32();
-                let right = right.evaluate(tuple).as_i32();
-                match op {
-                    BinaryOperator::Plus => Value::Integer(left + right),
-                    BinaryOperator::Minus => Value::Integer(left - right),
-                    BinaryOperator::Multiply => Value::Integer(left * right),
-                    BinaryOperator::Divide => Value::Integer(left / right),
-                }
+                let left = left.evaluate(tuple);
+                let right = right.evaluate(tuple);
+                left.evaluate_binary_expression(&right, *op)
             }
             Expr::IsNull(expr) => {
                 let val = expr.evaluate(tuple);

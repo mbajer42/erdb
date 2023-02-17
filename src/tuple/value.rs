@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use crate::catalog::schema::{ColumnDefinition, TypeId};
+use crate::parser::ast::BinaryOperator;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -8,6 +9,18 @@ pub enum Value {
     Integer(i32),
     String(String),
     Null,
+}
+
+fn compare<T: PartialEq + PartialOrd + ?Sized>(left: &T, right: &T, op: BinaryOperator) -> bool {
+    match op {
+        BinaryOperator::Eq => left == right,
+        BinaryOperator::NotEq => left != right,
+        BinaryOperator::Less => left < right,
+        BinaryOperator::LessEq => left <= right,
+        BinaryOperator::Greater => left > right,
+        BinaryOperator::GreaterEq => left >= right,
+        _ => unreachable!(),
+    }
 }
 
 impl Value {
@@ -83,6 +96,47 @@ impl Value {
             Value::Boolean(val) => *val,
             _ => unreachable!(),
         }
+    }
+
+    /// Evaluates the binary expression.
+    pub fn evaluate_binary_expression(&self, right: &Self, op: BinaryOperator) -> Value {
+        if self == &Value::Null || right == &Value::Null {
+            Value::Null
+        } else {
+            match op {
+                BinaryOperator::Plus
+                | BinaryOperator::Minus
+                | BinaryOperator::Multiply
+                | BinaryOperator::Divide => self.evaluate_arithmetic_expression(right, op),
+                BinaryOperator::Eq
+                | BinaryOperator::NotEq
+                | BinaryOperator::Less
+                | BinaryOperator::LessEq
+                | BinaryOperator::Greater
+                | BinaryOperator::GreaterEq => self.evaluate_comparison(right, op),
+            }
+        }
+    }
+
+    fn evaluate_arithmetic_expression(&self, right: &Self, op: BinaryOperator) -> Value {
+        match op {
+            BinaryOperator::Plus => Value::Integer(self.as_i32() + right.as_i32()),
+            BinaryOperator::Minus => Value::Integer(self.as_i32() - right.as_i32()),
+            BinaryOperator::Multiply => Value::Integer(self.as_i32() * right.as_i32()),
+            BinaryOperator::Divide => Value::Integer(self.as_i32() / right.as_i32()),
+            _ => unreachable!(),
+        }
+    }
+
+    fn evaluate_comparison(&self, right: &Self, op: BinaryOperator) -> Value {
+        let val = match self {
+            Value::Integer(left) => compare(left, &right.as_i32(), op),
+            Value::String(left) => compare(left.as_str(), right.as_str(), op),
+            Value::Boolean(left) => compare(left, &right.as_bool(), op),
+            Value::Null => unreachable!(),
+        };
+
+        Value::Boolean(val)
     }
 }
 

@@ -30,12 +30,18 @@ impl Display for UnaryOperator {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BinaryOperator {
     Plus,
     Minus,
     Multiply,
     Divide,
+    Less,
+    LessEq,
+    Eq,
+    GreaterEq,
+    Greater,
+    NotEq,
 }
 
 impl Display for BinaryOperator {
@@ -45,6 +51,12 @@ impl Display for BinaryOperator {
             Self::Minus => write!(f, "-"),
             Self::Multiply => write!(f, "*"),
             Self::Divide => write!(f, "/"),
+            Self::Less => write!(f, "<"),
+            Self::LessEq => write!(f, "<="),
+            Self::Eq => write!(f, "="),
+            Self::GreaterEq => write!(f, ">="),
+            Self::Greater => write!(f, ">"),
+            Self::NotEq => write!(f, "<>"),
         }
     }
 }
