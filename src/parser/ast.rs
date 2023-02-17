@@ -43,6 +43,8 @@ pub enum BinaryOperator {
     GreaterEq,
     Greater,
     NotEq,
+    And,
+    Or,
 }
 
 impl Display for BinaryOperator {
@@ -59,6 +61,8 @@ impl Display for BinaryOperator {
             Self::GreaterEq => write!(f, ">="),
             Self::Greater => write!(f, ">"),
             Self::NotEq => write!(f, "<>"),
+            Self::And => write!(f, "AND"),
+            Self::Or => write!(f, "OR"),
         }
     }
 }

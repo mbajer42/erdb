@@ -257,15 +257,19 @@ impl<'a> Analyzer<'a> {
             ast::Expr::Binary { left, op, right } => {
                 let (left, left_type) = Self::analyze_expression(*left, scope)?;
                 let (right, right_type) = Self::analyze_expression(*right, scope)?;
-                match op {
+                let result_type = match op {
                     BinaryOperator::Plus
                     | BinaryOperator::Minus
                     | BinaryOperator::Multiply
                     | BinaryOperator::Divide
                     | BinaryOperator::Modulo => {
                         if left_type != TypeId::Integer || right_type != TypeId::Integer {
-                            return Err(Error::msg(format!("Can apply '{}' only to integers. Left side is of type {}, right side is of type {}", op, left_type, right_type)));
+                            return Err(Error::msg(format!(
+                                "Arguments for '{}' must be of type integer. Left: {}, Right: {}",
+                                op, left_type, right_type
+                            )));
                         }
+                        TypeId::Integer
                     }
                     BinaryOperator::Eq
                     | BinaryOperator::NotEq
@@ -277,17 +281,31 @@ impl<'a> Analyzer<'a> {
                             && left_type != TypeId::Unknown
                             && right_type != TypeId::Unknown
                         {
-                            return Err(Error::msg(format!("Can '{}' compare only values of same type. Left side is {}, right side is {}", op, left_type, right_type)));
+                            return Err(Error::msg(format!(
+                                "Arguments for '{}' must be of same type. Left: {}, Right: {}",
+                                op, left_type, right_type
+                            )));
                         }
+                        TypeId::Boolean
                     }
-                }
+                    BinaryOperator::And | BinaryOperator::Or => {
+                        let valid_types = [TypeId::Boolean, TypeId::Unknown];
+                        if !valid_types.contains(&left_type) || !valid_types.contains(&right_type) {
+                            return Err(Error::msg(format!(
+                                "Arguments for '{}' must be of type boolean. Left: {}, Right: {}",
+                                op, left_type, right_type
+                            )));
+                        }
+                        TypeId::Boolean
+                    }
+                };
                 Ok((
                     Expr::Binary {
                         left: Box::new(left),
                         op,
                         right: Box::new(right),
                     },
-                    left_type,
+                    result_type,
                 ))
             }
             ast::Expr::Unary { op, expr } => {

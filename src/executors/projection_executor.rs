@@ -183,4 +183,51 @@ mod tests {
             execute_query_expect_single_tuple(&buffer_manager, &sql, &analyzer, expected);
         }
     }
+
+    #[test]
+    fn can_execute_or_and_expressions() {
+        let data_dir = tempdir().unwrap();
+        let file_manager = FileManager::new(data_dir.path()).unwrap();
+        let buffer_manager = BufferManager::new(file_manager, 1);
+        let catalog = Catalog::new(&buffer_manager, true).unwrap();
+        let analyzer = Analyzer::new(&catalog);
+
+        let left_op_right_result = vec![
+            (
+                Value::Boolean(true),
+                BinaryOperator::And,
+                Value::Boolean(true),
+                Value::Boolean(true),
+            ),
+            (
+                Value::Boolean(false),
+                BinaryOperator::And,
+                Value::Boolean(true),
+                Value::Boolean(false),
+            ),
+            (
+                Value::Boolean(false),
+                BinaryOperator::Or,
+                Value::Boolean(true),
+                Value::Boolean(true),
+            ),
+            (
+                Value::Boolean(false),
+                BinaryOperator::Or,
+                Value::Boolean(false),
+                Value::Boolean(false),
+            ),
+            (
+                Value::Boolean(false),
+                BinaryOperator::Or,
+                Value::Null,
+                Value::Null,
+            ),
+        ];
+
+        for (left, op, right, expected) in left_op_right_result {
+            let sql = format!("select {} {} {}", left, op, right);
+            execute_query_expect_single_tuple(&buffer_manager, &sql, &analyzer, expected);
+        }
+    }
 }

@@ -5,6 +5,7 @@ use anyhow::{Error, Result};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Keyword {
+    And,
     As,
     Boolean,
     Create,
@@ -16,6 +17,7 @@ pub enum Keyword {
     Is,
     Not,
     Null,
+    Or,
     Select,
     Table,
     Text,
@@ -28,6 +30,7 @@ impl FromStr for Keyword {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let res = match s {
+            "and" => Self::And,
             "as" => Self::As,
             "boolean" => Self::Boolean,
             "create" => Self::Create,
@@ -39,6 +42,7 @@ impl FromStr for Keyword {
             "is" => Self::Is,
             "not" => Self::Not,
             "null" => Self::Null,
+            "or" => Self::Or,
             "select" => Self::Select,
             "table" => Self::Table,
             "text" => Self::Text,

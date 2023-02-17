@@ -115,6 +115,8 @@ impl Value {
                 | BinaryOperator::LessEq
                 | BinaryOperator::Greater
                 | BinaryOperator::GreaterEq => self.evaluate_comparison(right, op),
+                BinaryOperator::And => Value::Boolean(self.as_bool() && right.as_bool()),
+                BinaryOperator::Or => Value::Boolean(self.as_bool() || right.as_bool()),
             }
         }
     }

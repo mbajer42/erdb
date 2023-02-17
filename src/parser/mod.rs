@@ -12,6 +12,8 @@ mod token;
 
 /// taken from https://www.postgresql.org/docs/current/sql-syntax-lexical.html
 pub(in self::super) mod precedence {
+    pub const OR: u8 = 1;
+    pub const AND: u8 = 2;
     pub const IS: u8 = 4;
     pub const COMPARISON: u8 = 5;
     pub const PLUS_MINUS: u8 = 8;
@@ -255,7 +257,9 @@ impl Parser {
             | Token::Less
             | Token::LessEq
             | Token::Greater
-            | Token::GreaterEq) => {
+            | Token::GreaterEq
+            | Token::Keyword(Keyword::And)
+            | Token::Keyword(Keyword::Or)) => {
                 let right = self.parse_expression_with_precedence(precedence)?;
                 let binary_op = match token {
                     Token::Plus => BinaryOperator::Plus,
@@ -269,6 +273,8 @@ impl Parser {
                     Token::LessEq => BinaryOperator::LessEq,
                     Token::Greater => BinaryOperator::Greater,
                     Token::GreaterEq => BinaryOperator::GreaterEq,
+                    Token::Keyword(Keyword::And) => BinaryOperator::And,
+                    Token::Keyword(Keyword::Or) => BinaryOperator::Or,
                     _ => unreachable!(),
                 };
                 Ok(Expr::Binary {
@@ -309,6 +315,8 @@ impl Parser {
             | Token::Greater
             | Token::GreaterEq => precedence::COMPARISON,
             Token::Keyword(Keyword::Is) => precedence::IS,
+            Token::Keyword(Keyword::And) => precedence::AND,
+            Token::Keyword(Keyword::Or) => precedence::OR,
             _ => 0,
         }
     }
