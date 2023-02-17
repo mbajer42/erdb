@@ -51,8 +51,11 @@ impl<'a> ExecutorFactory<'a> {
             Plan::InsertPlan {
                 target,
                 target_schema,
-                child: _,
-            } => (*target, target_schema.clone()),
+                child,
+            } => {
+                self.insert_tables(child);
+                (*target, target_schema.clone())
+            }
             Plan::Projection {
                 projections: _,
                 child,
