@@ -76,6 +76,8 @@ pub enum Token {
     Plus,
     /// Division '/'
     Division,
+    /// Modulo operator '%'
+    Modulo,
     /// Equal '='
     Eq,
     /// Not equal (either '<>' or '!=')
@@ -165,6 +167,7 @@ impl<'a> Tokenizer<'a> {
                 '+' => Token::Plus,
                 '-' => Token::Minus,
                 '/' => Token::Division,
+                '%' => Token::Modulo,
                 '!' => match self.chars.peek() {
                     Some((_pos, '=')) => {
                         self.chars.next();

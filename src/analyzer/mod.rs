@@ -261,7 +261,8 @@ impl<'a> Analyzer<'a> {
                     BinaryOperator::Plus
                     | BinaryOperator::Minus
                     | BinaryOperator::Multiply
-                    | BinaryOperator::Divide => {
+                    | BinaryOperator::Divide
+                    | BinaryOperator::Modulo => {
                         if left_type != TypeId::Integer || right_type != TypeId::Integer {
                             return Err(Error::msg(format!("Can apply '{}' only to integers. Left side is of type {}, right side is of type {}", op, left_type, right_type)));
                         }

@@ -10,12 +10,12 @@ use self::token::{tokenize, Keyword, Token};
 pub mod ast;
 mod token;
 
+/// taken from https://www.postgresql.org/docs/current/sql-syntax-lexical.html
 pub(in self::super) mod precedence {
-    pub const NOT_NULL: u8 = 11;
-    pub const IS_NULL: u8 = 12;
-    pub const COMPARISON: u8 = 13;
-    pub const PLUS_MINUS: u8 = 14;
-    pub const PRODUCT_DIVISION: u8 = 15;
+    pub const IS: u8 = 4;
+    pub const COMPARISON: u8 = 5;
+    pub const PLUS_MINUS: u8 = 8;
+    pub const PRODUCT_DIVISION_MODULO: u8 = 9;
 }
 pub struct Parser {
     tokens: VecDeque<Token>,
@@ -249,6 +249,7 @@ impl Parser {
             | Token::Minus
             | Token::Star
             | Token::Division
+            | Token::Modulo
             | Token::Eq
             | Token::NotEq
             | Token::Less
@@ -261,6 +262,7 @@ impl Parser {
                     Token::Minus => BinaryOperator::Minus,
                     Token::Star => BinaryOperator::Multiply,
                     Token::Division => BinaryOperator::Divide,
+                    Token::Modulo => BinaryOperator::Modulo,
                     Token::Eq => BinaryOperator::Eq,
                     Token::NotEq => BinaryOperator::NotEq,
                     Token::Less => BinaryOperator::Less,
@@ -299,23 +301,14 @@ impl Parser {
     fn next_precedence(&self) -> u8 {
         match self.peek_token() {
             Token::Plus | Token::Minus => precedence::PLUS_MINUS,
-            Token::Star | Token::Division => precedence::PRODUCT_DIVISION,
+            Token::Star | Token::Division | Token::Modulo => precedence::PRODUCT_DIVISION_MODULO,
             Token::Eq
             | Token::NotEq
             | Token::Less
             | Token::LessEq
             | Token::Greater
             | Token::GreaterEq => precedence::COMPARISON,
-            Token::Keyword(Keyword::Is)
-                if self.peek_keywords_match(&[Keyword::Is, Keyword::Null]) =>
-            {
-                precedence::IS_NULL
-            }
-            Token::Keyword(Keyword::Is)
-                if self.peek_keywords_match(&[Keyword::Is, Keyword::Not, Keyword::Null]) =>
-            {
-                precedence::NOT_NULL
-            }
+            Token::Keyword(Keyword::Is) => precedence::IS,
             _ => 0,
         }
     }

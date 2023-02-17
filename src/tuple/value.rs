@@ -107,7 +107,8 @@ impl Value {
                 BinaryOperator::Plus
                 | BinaryOperator::Minus
                 | BinaryOperator::Multiply
-                | BinaryOperator::Divide => self.evaluate_arithmetic_expression(right, op),
+                | BinaryOperator::Divide
+                | BinaryOperator::Modulo => self.evaluate_arithmetic_expression(right, op),
                 BinaryOperator::Eq
                 | BinaryOperator::NotEq
                 | BinaryOperator::Less
@@ -124,6 +125,7 @@ impl Value {
             BinaryOperator::Minus => Value::Integer(self.as_i32() - right.as_i32()),
             BinaryOperator::Multiply => Value::Integer(self.as_i32() * right.as_i32()),
             BinaryOperator::Divide => Value::Integer(self.as_i32() / right.as_i32()),
+            BinaryOperator::Modulo => Value::Integer(self.as_i32() % right.as_i32()),
             _ => unreachable!(),
         }
     }
