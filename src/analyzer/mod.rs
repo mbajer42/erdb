@@ -25,7 +25,8 @@ impl<'a> Analyzer<'a> {
                 values,
                 projections,
                 from,
-            } => self.analyze_select(values, projections, from),
+                filter,
+            } => self.analyze_select(values, projections, from, filter),
             Statement::Insert { into, select } => self.analyze_insert(into, *select),
             _ => unreachable!(),
         }
@@ -33,7 +34,7 @@ impl<'a> Analyzer<'a> {
 
     fn analyze_insert(&self, into: ast::Table, select: Statement) -> Result<Query> {
         let (table_id, schema) = match self.analyze_table(into)? {
-            Table::TableReference { table_id, schema } => (table_id, schema),
+            Table::Reference { table_id, schema } => (table_id, schema),
             _ => unreachable!(),
         };
 
@@ -81,6 +82,7 @@ impl<'a> Analyzer<'a> {
         values: Option<Vec<Vec<ast::Expr>>>,
         projections: Vec<ast::Projection>,
         from: ast::Table,
+        filter: Option<ast::Expr>,
     ) -> Result<Query> {
         if let Some(values) = values {
             return Self::analyze_values(values);
@@ -97,11 +99,24 @@ impl<'a> Analyzer<'a> {
             output_columns.push(ColumnDefinition::new(type_id, name, col as u8, false));
         }
 
+        let filter = if let Some(filter_expr) = filter {
+            let (expr, type_id) = Self::analyze_expression(filter_expr, &table)?;
+            if type_id != TypeId::Unknown && type_id != TypeId::Boolean {
+                return Err(Error::msg(format!(
+                    "WHERE condition must evaluate to boolean, but evaluates to {}",
+                    type_id
+                )));
+            }
+            Some(expr)
+        } else {
+            None
+        };
+
         Ok(Query {
             query_type: QueryType::Select,
-            values: None,
             from: table,
             projections,
+            filter,
             output_schema: Schema::new(output_columns),
             target_schema: None,
             target: None,
@@ -162,9 +177,12 @@ impl<'a> Analyzer<'a> {
 
         Ok(Query {
             query_type: QueryType::Select,
-            values: Some(expressions),
-            from: Table::EmptyTable,
+            from: Table::Values {
+                values: expressions,
+                schema: Schema::new(output_columns.clone()),
+            },
             projections: vec![],
+            filter: None,
             output_schema: Schema::new(output_columns),
             target_schema: None,
             target: None,
@@ -179,7 +197,7 @@ impl<'a> Analyzer<'a> {
                     .get_table_id(&name)
                     .ok_or_else(|| Error::msg(format!("Could not find table {}", name)))?;
                 let schema = self.catalog.get_schema(&name).unwrap().clone();
-                Ok(Table::TableReference { table_id, schema })
+                Ok(Table::Reference { table_id, schema })
             }
             ast::Table::EmptyTable => Ok(Table::EmptyTable),
         }
@@ -375,9 +393,9 @@ mod tests {
 
         let expected_query = Query {
             query_type: QueryType::Select,
-            values: None,
-            from: Table::TableReference { table_id, schema },
+            from: Table::Reference { table_id, schema },
             projections: vec![Expr::ColumnReference(0), Expr::ColumnReference(1)],
+            filter: None,
             output_schema: Schema::new(vec![
                 ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, false),
                 ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, false),
@@ -415,8 +433,7 @@ mod tests {
 
         let expected_query = Query {
             query_type: QueryType::Select,
-            values: None,
-            from: Table::TableReference { table_id, schema },
+            from: Table::Reference { table_id, schema },
             projections: vec![
                 Expr::Unary {
                     op: UnaryOperator::Minus,
@@ -437,6 +454,7 @@ mod tests {
                     }),
                 },
             ],
+            filter: None,
             output_schema: Schema::new(vec![
                 ColumnDefinition::new(TypeId::Integer, "negative_id".to_owned(), 0, false),
                 ColumnDefinition::new(TypeId::Integer, "id + 1".to_owned(), 1, false),
@@ -463,31 +481,35 @@ mod tests {
         let catalog = Catalog::new(&buffer_manager, true).unwrap();
         let analyzer = Analyzer::new(&catalog);
         let query = analyzer.analyze(statement).unwrap();
+        let expected_output_schema = Schema::new(vec![
+            ColumnDefinition::new(TypeId::Integer, "col_0".to_owned(), 0, true),
+            ColumnDefinition::new(TypeId::Text, "col_1".to_owned(), 1, false),
+            ColumnDefinition::new(TypeId::Text, "col_2".to_owned(), 2, false),
+            ColumnDefinition::new(TypeId::Boolean, "col_3".to_owned(), 3, true),
+        ]);
 
         let expected_query = Query {
             query_type: QueryType::Select,
-            values: Some(vec![
-                vec![
-                    Expr::Integer(1),
-                    Expr::Null,
-                    Expr::String("foo".to_owned()),
-                    Expr::Boolean(true),
+            from: Table::Values {
+                values: vec![
+                    vec![
+                        Expr::Integer(1),
+                        Expr::Null,
+                        Expr::String("foo".to_owned()),
+                        Expr::Boolean(true),
+                    ],
+                    vec![
+                        Expr::Integer(2),
+                        Expr::String("bar".to_owned()),
+                        Expr::Null,
+                        Expr::Boolean(false),
+                    ],
                 ],
-                vec![
-                    Expr::Integer(2),
-                    Expr::String("bar".to_owned()),
-                    Expr::Null,
-                    Expr::Boolean(false),
-                ],
-            ]),
-            from: Table::EmptyTable,
+                schema: expected_output_schema.clone(),
+            },
+            filter: None,
             projections: vec![],
-            output_schema: Schema::new(vec![
-                ColumnDefinition::new(TypeId::Integer, "col_0".to_owned(), 0, true),
-                ColumnDefinition::new(TypeId::Text, "col_1".to_owned(), 1, false),
-                ColumnDefinition::new(TypeId::Text, "col_2".to_owned(), 2, false),
-                ColumnDefinition::new(TypeId::Boolean, "col_3".to_owned(), 3, true),
-            ]),
+            output_schema: expected_output_schema,
             target_schema: None,
             target: None,
         };

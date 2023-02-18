@@ -117,6 +117,7 @@ impl Parser {
             values: Some(values),
             projections: vec![],
             from: Table::EmptyTable,
+            filter: None,
         })
     }
 
@@ -124,12 +125,22 @@ impl Parser {
         let projections = self.parse_projections()?;
 
         let from = self.parse_table()?;
+        let filter = self.parse_filter()?;
 
         Ok(Statement::Select {
             values: None,
             projections,
             from,
+            filter,
         })
+    }
+
+    fn parse_filter(&mut self) -> Result<Option<Expr>> {
+        match self.next_token() {
+            Token::Keyword(Keyword::Where) => Ok(Some(self.parse_expression()?)),
+            Token::End | Token::Semicolon => Ok(None),
+            found => self.wrong_token("end of statement or WHERE", found),
+        }
     }
 
     fn parse_table(&mut self) -> Result<Table> {
@@ -530,6 +541,7 @@ mod tests {
                 name: "accounts".to_owned(),
                 alias: None,
             },
+            filter: None,
         };
 
         assert_eq!(statement, expected_statement);
@@ -560,6 +572,7 @@ mod tests {
                 name: "table1".to_owned(),
                 alias: Some("table_alias".to_owned()),
             },
+            filter: None,
         };
 
         assert_eq!(statement, expected_statement);
@@ -594,6 +607,7 @@ mod tests {
                 name: "table_1".to_owned(),
                 alias: None,
             },
+            filter: None,
         };
 
         assert_eq!(statement, expected_statement);
@@ -624,6 +638,7 @@ mod tests {
                     name: "table_name".to_owned(),
                     alias: None,
                 },
+                filter: None,
             };
 
             assert_eq!(statement, expected_statement);
@@ -656,6 +671,7 @@ mod tests {
                 }),
             })],
             from: Table::EmptyTable,
+            filter: None,
         };
 
         assert_eq!(statement, expected_statement);
@@ -683,6 +699,7 @@ mod tests {
             ]),
             projections: vec![],
             from: Table::EmptyTable,
+            filter: None,
         };
 
         assert_eq!(statement, expected_statement);
@@ -715,6 +732,7 @@ mod tests {
                 ]),
                 projections: vec![],
                 from: Table::EmptyTable,
+                filter: None,
             }),
         };
 
@@ -740,6 +758,7 @@ mod tests {
                     name: "old_table".to_owned(),
                     alias: None,
                 },
+                filter: None,
             }),
         };
 

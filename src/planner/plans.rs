@@ -22,4 +22,8 @@ pub enum Plan {
         target_schema: Schema,
         child: Box<Plan>,
     },
+    FilterPlan {
+        filter: Expr,
+        child: Box<Plan>,
+    },
 }

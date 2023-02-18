@@ -23,6 +23,7 @@ pub enum Keyword {
     Text,
     True,
     Values,
+    Where,
 }
 
 impl FromStr for Keyword {
@@ -48,6 +49,7 @@ impl FromStr for Keyword {
             "text" => Self::Text,
             "true" => Self::True,
             "values" => Self::Values,
+            "where" => Self::Where,
             _ => return Err(()),
         };
         Ok(res)

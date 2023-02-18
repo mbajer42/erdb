@@ -129,6 +129,7 @@ pub enum Statement {
         values: Option<Vec<Vec<Expr>>>,
         projections: Vec<Projection>,
         from: Table,
+        filter: Option<Expr>,
     },
     Insert {
         into: Table,

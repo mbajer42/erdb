@@ -14,26 +14,17 @@ impl Planner {
     pub fn plan_query(&self, query: Query) -> Plan {
         let Query {
             query_type,
-            values,
             from,
             projections,
+            filter,
             output_schema,
             target,
             target_schema,
         } = query;
 
-        let plan = {
-            if let Some(values) = values {
-                Plan::ValuesPlan {
-                    values,
-                    output_schema,
-                }
-            } else {
-                let plan = self.plan_table_reference(from);
-
-                self.plan_projections(projections, output_schema, plan)
-            }
-        };
+        let mut plan = self.plan_table_reference(from);
+        plan = self.plan_filter(filter, plan);
+        plan = self.plan_projections(projections, output_schema, plan);
 
         if query_type == QueryType::Insert {
             Plan::InsertPlan {
@@ -46,9 +37,20 @@ impl Planner {
         }
     }
 
+    fn plan_filter(&self, filter: Option<Expr>, child: Plan) -> Plan {
+        if let Some(filter) = filter {
+            Plan::FilterPlan {
+                filter,
+                child: Box::new(child),
+            }
+        } else {
+            child
+        }
+    }
+
     fn plan_table_reference(&self, table: Table) -> Plan {
         match table {
-            Table::TableReference { table_id, schema } => Plan::SequentialScan {
+            Table::Reference { table_id, schema } => Plan::SequentialScan {
                 table_id,
                 output_schema: schema,
             },
@@ -56,14 +58,22 @@ impl Planner {
                 values: vec![vec![]],
                 output_schema: EMPTY_SCHEMA.clone(),
             },
+            Table::Values { values, schema } => Plan::ValuesPlan {
+                values,
+                output_schema: schema,
+            },
         }
     }
 
     fn plan_projections(&self, projections: Vec<Expr>, schema: Schema, child: Plan) -> Plan {
-        Plan::Projection {
-            projections,
-            child: Box::new(child),
-            output_schema: schema,
+        if projections.is_empty() {
+            child
+        } else {
+            Plan::Projection {
+                projections,
+                child: Box::new(child),
+                output_schema: schema,
+            }
         }
     }
 }

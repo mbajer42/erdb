@@ -67,18 +67,26 @@ impl Expr {
 
 #[derive(Debug, PartialEq)]
 pub enum Table {
-    TableReference { table_id: TableId, schema: Schema },
+    Reference {
+        table_id: TableId,
+        schema: Schema,
+    },
+    Values {
+        values: Vec<Vec<Expr>>,
+        schema: Schema,
+    },
     EmptyTable,
 }
 
 impl Table {
     pub fn schema(&self) -> &Schema {
         match self {
-            Table::TableReference {
+            Table::Reference {
                 table_id: _,
                 schema,
             } => schema,
             Table::EmptyTable => &EMPTY_SCHEMA,
+            Table::Values { values: _, schema } => schema,
         }
     }
 }
@@ -86,12 +94,12 @@ impl Table {
 #[derive(Debug, PartialEq)]
 pub struct Query {
     pub query_type: QueryType,
-    /// VALUES
-    pub values: Option<Vec<Vec<Expr>>>,
     /// FROM clause
     pub from: Table,
     /// SELECT list
     pub projections: Vec<Expr>,
+    /// WHERE clause
+    pub filter: Option<Expr>,
     /// schema of the query output
     pub output_schema: Schema,
     /// target table id of output, only for INSERT/DELETE/UPDATE

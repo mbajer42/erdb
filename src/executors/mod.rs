@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 
+use self::filter_executor::FilterExecutor;
 use self::insert_executor::InsertExecutor;
 use self::projection_executor::ProjectionExecutor;
 use self::seq_scan_executor::SeqScanExecutor;
@@ -13,6 +14,7 @@ use crate::planner::plans::Plan;
 use crate::storage::heap::table::Table;
 use crate::tuple::Tuple;
 
+mod filter_executor;
 mod insert_executor;
 mod projection_executor;
 mod seq_scan_executor;
@@ -61,6 +63,7 @@ impl<'a> ExecutorFactory<'a> {
                 child,
                 output_schema: _,
             } => return self.insert_tables(child),
+            Plan::FilterPlan { filter: _, child } => return self.insert_tables(child),
             _ => return,
         };
 
@@ -97,6 +100,10 @@ impl<'a> ExecutorFactory<'a> {
                 let table = self.get_table(target);
                 let child = self.create_executor_internal(*child)?;
                 Ok(Box::new(InsertExecutor::new(table, child)))
+            }
+            Plan::FilterPlan { filter, child } => {
+                let child = self.create_executor_internal(*child)?;
+                Ok(Box::new(FilterExecutor::new(child, filter)))
             }
         }
     }
