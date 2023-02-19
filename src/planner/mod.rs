@@ -1,4 +1,4 @@
-use self::plans::Plan;
+use self::plans::PhysicalPlan;
 use crate::analyzer::query::{Expr, Query, QueryType, Table, EMPTY_SCHEMA};
 use crate::catalog::schema::Schema;
 
@@ -11,7 +11,7 @@ impl Planner {
         Self {}
     }
 
-    pub fn plan_query(&self, query: Query) -> Plan {
+    pub fn plan_query(&self, query: Query) -> PhysicalPlan {
         let Query {
             query_type,
             from,
@@ -27,7 +27,7 @@ impl Planner {
         plan = self.plan_projections(projections, output_schema, plan);
 
         if query_type == QueryType::Insert {
-            Plan::InsertPlan {
+            PhysicalPlan::InsertPlan {
                 target: target.unwrap(),
                 child: Box::new(plan),
                 target_schema: target_schema.unwrap(),
@@ -37,9 +37,9 @@ impl Planner {
         }
     }
 
-    fn plan_filter(&self, filter: Option<Expr>, child: Plan) -> Plan {
+    fn plan_filter(&self, filter: Option<Expr>, child: PhysicalPlan) -> PhysicalPlan {
         if let Some(filter) = filter {
-            Plan::FilterPlan {
+            PhysicalPlan::FilterPlan {
                 filter,
                 child: Box::new(child),
             }
@@ -48,28 +48,33 @@ impl Planner {
         }
     }
 
-    fn plan_table_reference(&self, table: Table) -> Plan {
+    fn plan_table_reference(&self, table: Table) -> PhysicalPlan {
         match table {
-            Table::Reference { table_id, schema } => Plan::SequentialScan {
+            Table::Reference { table_id, schema } => PhysicalPlan::SequentialScan {
                 table_id,
                 output_schema: schema,
             },
-            Table::EmptyTable => Plan::ValuesPlan {
+            Table::EmptyTable => PhysicalPlan::ValuesPlan {
                 values: vec![vec![]],
                 output_schema: EMPTY_SCHEMA.clone(),
             },
-            Table::Values { values, schema } => Plan::ValuesPlan {
+            Table::Values { values, schema } => PhysicalPlan::ValuesPlan {
                 values,
                 output_schema: schema,
             },
         }
     }
 
-    fn plan_projections(&self, projections: Vec<Expr>, schema: Schema, child: Plan) -> Plan {
+    fn plan_projections(
+        &self,
+        projections: Vec<Expr>,
+        schema: Schema,
+        child: PhysicalPlan,
+    ) -> PhysicalPlan {
         if projections.is_empty() {
             child
         } else {
-            Plan::Projection {
+            PhysicalPlan::Projection {
                 projections,
                 child: Box::new(child),
                 output_schema: schema,

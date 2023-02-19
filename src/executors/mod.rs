@@ -10,7 +10,7 @@ use self::values_executor::ValuesExecutor;
 use crate::buffer::buffer_manager::BufferManager;
 use crate::catalog::schema::Schema;
 use crate::common::TableId;
-use crate::planner::plans::Plan;
+use crate::planner::plans::PhysicalPlan;
 use crate::storage::heap::table::Table;
 use crate::tuple::Tuple;
 
@@ -39,18 +39,18 @@ impl<'a> ExecutorFactory<'a> {
         }
     }
 
-    pub fn create_executor(&'a mut self, plan: Plan) -> Result<Box<dyn Executor + 'a>> {
+    pub fn create_executor(&'a mut self, plan: PhysicalPlan) -> Result<Box<dyn Executor + 'a>> {
         self.insert_tables(&plan);
         self.create_executor_internal(plan)
     }
 
-    fn insert_tables(&mut self, plan: &Plan) {
+    fn insert_tables(&mut self, plan: &PhysicalPlan) {
         let (table_id, schema) = match plan {
-            Plan::SequentialScan {
+            PhysicalPlan::SequentialScan {
                 table_id,
                 output_schema,
             } => (*table_id, output_schema.clone()),
-            Plan::InsertPlan {
+            PhysicalPlan::InsertPlan {
                 target,
                 target_schema,
                 child,
@@ -58,25 +58,25 @@ impl<'a> ExecutorFactory<'a> {
                 self.insert_tables(child);
                 (*target, target_schema.clone())
             }
-            Plan::Projection {
+            PhysicalPlan::Projection {
                 projections: _,
                 child,
                 output_schema: _,
             } => return self.insert_tables(child),
-            Plan::FilterPlan { filter: _, child } => return self.insert_tables(child),
+            PhysicalPlan::FilterPlan { filter: _, child } => return self.insert_tables(child),
             _ => return,
         };
 
         self.insert_table(table_id, schema);
     }
 
-    fn create_executor_internal(&'a self, plan: Plan) -> Result<Box<dyn Executor + 'a>> {
+    fn create_executor_internal(&'a self, plan: PhysicalPlan) -> Result<Box<dyn Executor + 'a>> {
         match plan {
-            Plan::SequentialScan {
+            PhysicalPlan::SequentialScan {
                 table_id,
                 output_schema: _,
             } => Ok(Box::new(self.create_seq_scan_executor(table_id)?)),
-            Plan::Projection {
+            PhysicalPlan::Projection {
                 projections,
                 child,
                 output_schema,
@@ -88,11 +88,11 @@ impl<'a> ExecutorFactory<'a> {
                     output_schema,
                 )))
             }
-            Plan::ValuesPlan {
+            PhysicalPlan::ValuesPlan {
                 values,
                 output_schema,
             } => Ok(Box::new(ValuesExecutor::new(values, output_schema))),
-            Plan::InsertPlan {
+            PhysicalPlan::InsertPlan {
                 target,
                 child,
                 target_schema: _,
@@ -101,7 +101,7 @@ impl<'a> ExecutorFactory<'a> {
                 let child = self.create_executor_internal(*child)?;
                 Ok(Box::new(InsertExecutor::new(table, child)))
             }
-            Plan::FilterPlan { filter, child } => {
+            PhysicalPlan::FilterPlan { filter, child } => {
                 let child = self.create_executor_internal(*child)?;
                 Ok(Box::new(FilterExecutor::new(child, filter)))
             }

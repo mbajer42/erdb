@@ -79,10 +79,10 @@ impl<'a> Analyzer<'a> {
 
     fn analyze_select(
         &self,
-        values: Option<Vec<Vec<ast::Expr>>>,
+        values: Option<Vec<Vec<ast::ExprNode>>>,
         projections: Vec<ast::Projection>,
         from: ast::Table,
-        filter: Option<ast::Expr>,
+        filter: Option<ast::ExprNode>,
     ) -> Result<Query> {
         if let Some(values) = values {
             return Self::analyze_values(values);
@@ -123,7 +123,7 @@ impl<'a> Analyzer<'a> {
         })
     }
 
-    fn analyze_values(values: Vec<Vec<ast::Expr>>) -> Result<Query> {
+    fn analyze_values(values: Vec<Vec<ast::ExprNode>>) -> Result<Query> {
         let mut expressions = vec![];
         let mut output_columns = vec![];
 
@@ -254,9 +254,9 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn analyze_expression(expr: ast::Expr, scope: &Table) -> Result<(Expr, TypeId)> {
+    fn analyze_expression(expr: ast::ExprNode, scope: &Table) -> Result<(Expr, TypeId)> {
         match expr {
-            ast::Expr::Identifier(name) => {
+            ast::ExprNode::Identifier(name) => {
                 let column = scope
                     .schema()
                     .find_column(&name)
@@ -265,14 +265,14 @@ impl<'a> Analyzer<'a> {
                 let type_id = column.type_id();
                 Ok((Expr::ColumnReference(column_offset), type_id))
             }
-            ast::Expr::Number(number) => {
+            ast::ExprNode::Number(number) => {
                 let num = number.parse::<i32>()?;
                 Ok((Expr::Integer(num), TypeId::Integer))
             }
-            ast::Expr::String(s) => Ok((Expr::String(s), TypeId::Text)),
-            ast::Expr::Boolean(val) => Ok((Expr::Boolean(val), TypeId::Boolean)),
-            ast::Expr::Grouping(expr) => Self::analyze_expression(*expr, scope),
-            ast::Expr::Binary { left, op, right } => {
+            ast::ExprNode::String(s) => Ok((Expr::String(s), TypeId::Text)),
+            ast::ExprNode::Boolean(val) => Ok((Expr::Boolean(val), TypeId::Boolean)),
+            ast::ExprNode::Grouping(expr) => Self::analyze_expression(*expr, scope),
+            ast::ExprNode::Binary { left, op, right } => {
                 let (left, left_type) = Self::analyze_expression(*left, scope)?;
                 let (right, right_type) = Self::analyze_expression(*right, scope)?;
                 let result_type = match op {
@@ -326,7 +326,7 @@ impl<'a> Analyzer<'a> {
                     result_type,
                 ))
             }
-            ast::Expr::Unary { op, expr } => {
+            ast::ExprNode::Unary { op, expr } => {
                 let (expr, type_id) = Self::analyze_expression(*expr, scope)?;
                 if type_id != TypeId::Integer {
                     Err(Error::msg(format!(
@@ -343,15 +343,15 @@ impl<'a> Analyzer<'a> {
                     ))
                 }
             }
-            ast::Expr::IsNull(expr) => {
+            ast::ExprNode::IsNull(expr) => {
                 let (expr, _) = Self::analyze_expression(*expr, scope)?;
                 Ok((Expr::IsNull(Box::new(expr)), TypeId::Boolean))
             }
-            ast::Expr::IsNotNull(expr) => {
+            ast::ExprNode::IsNotNull(expr) => {
                 let (expr, _) = Self::analyze_expression(*expr, scope)?;
                 Ok((Expr::IsNotNull(Box::new(expr)), TypeId::Boolean))
             }
-            ast::Expr::Null => Ok((Expr::Null, TypeId::Unknown)),
+            ast::ExprNode::Null => Ok((Expr::Null, TypeId::Unknown)),
         }
     }
 }

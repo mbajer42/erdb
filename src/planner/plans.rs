@@ -3,14 +3,14 @@ use crate::catalog::schema::Schema;
 use crate::common::TableId;
 
 #[derive(Debug, PartialEq)]
-pub enum Plan {
+pub enum PhysicalPlan {
     SequentialScan {
         table_id: TableId,
         output_schema: Schema,
     },
     Projection {
         projections: Vec<Expr>,
-        child: Box<Plan>,
+        child: Box<PhysicalPlan>,
         output_schema: Schema,
     },
     ValuesPlan {
@@ -20,10 +20,10 @@ pub enum Plan {
     InsertPlan {
         target: TableId,
         target_schema: Schema,
-        child: Box<Plan>,
+        child: Box<PhysicalPlan>,
     },
     FilterPlan {
         filter: Expr,
-        child: Box<Plan>,
+        child: Box<PhysicalPlan>,
     },
 }

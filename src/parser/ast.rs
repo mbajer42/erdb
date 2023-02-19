@@ -68,28 +68,28 @@ impl Display for BinaryOperator {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Expr {
+pub enum ExprNode {
     Identifier(String),
     Number(String),
     String(String),
     Boolean(bool),
     // an expression in parenthesis, e.g. (1+1)
-    Grouping(Box<Expr>),
+    Grouping(Box<ExprNode>),
     Binary {
-        left: Box<Expr>,
+        left: Box<ExprNode>,
         op: BinaryOperator,
-        right: Box<Expr>,
+        right: Box<ExprNode>,
     },
     Unary {
         op: UnaryOperator,
-        expr: Box<Expr>,
+        expr: Box<ExprNode>,
     },
-    IsNull(Box<Expr>),
-    IsNotNull(Box<Expr>),
+    IsNull(Box<ExprNode>),
+    IsNotNull(Box<ExprNode>),
     Null,
 }
 
-impl Display for Expr {
+impl Display for ExprNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Identifier(id) => write!(f, "{}", id),
@@ -97,11 +97,11 @@ impl Display for Expr {
             Self::String(s) => write!(f, "'{}'", s),
             Self::Boolean(b) => write!(f, "{}", b),
             Self::Grouping(expr) => write!(f, "({})", expr),
-            Expr::Binary { left, op, right } => write!(f, "{} {} {}", left, op, right),
-            Expr::Unary { op, expr } => write!(f, "{}{}", op, expr),
-            Expr::IsNull(expr) => write!(f, "{} IS NULL", expr),
-            Expr::IsNotNull(expr) => write!(f, "{} IS NOT NULL", expr),
-            Expr::Null => write!(f, "NULL"),
+            ExprNode::Binary { left, op, right } => write!(f, "{} {} {}", left, op, right),
+            ExprNode::Unary { op, expr } => write!(f, "{}{}", op, expr),
+            ExprNode::IsNull(expr) => write!(f, "{} IS NULL", expr),
+            ExprNode::IsNotNull(expr) => write!(f, "{} IS NOT NULL", expr),
+            ExprNode::Null => write!(f, "NULL"),
         }
     }
 }
@@ -114,8 +114,8 @@ pub enum Table {
 
 #[derive(Debug, PartialEq)]
 pub enum Projection {
-    UnnamedExpr(Expr),
-    NamedExpr { expr: Expr, alias: String },
+    UnnamedExpr(ExprNode),
+    NamedExpr { expr: ExprNode, alias: String },
     Wildcard,
 }
 
@@ -126,10 +126,10 @@ pub enum Statement {
         columns: Vec<ColumnDefinition>,
     },
     Select {
-        values: Option<Vec<Vec<Expr>>>,
+        values: Option<Vec<Vec<ExprNode>>>,
         projections: Vec<Projection>,
         from: Table,
-        filter: Option<Expr>,
+        filter: Option<ExprNode>,
     },
     Insert {
         into: Table,

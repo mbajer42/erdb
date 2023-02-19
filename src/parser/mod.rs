@@ -3,7 +3,8 @@ use std::collections::VecDeque;
 use anyhow::{Error, Result};
 
 use self::ast::{
-    BinaryOperator, ColumnDefinition, DataType, Expr, Projection, Statement, Table, UnaryOperator,
+    BinaryOperator, ColumnDefinition, DataType, ExprNode, Projection, Statement, Table,
+    UnaryOperator,
 };
 use self::token::{tokenize, Keyword, Token};
 
@@ -135,7 +136,7 @@ impl Parser {
         })
     }
 
-    fn parse_filter(&mut self) -> Result<Option<Expr>> {
+    fn parse_filter(&mut self) -> Result<Option<ExprNode>> {
         match self.next_token() {
             Token::Keyword(Keyword::Where) => Ok(Some(self.parse_expression()?)),
             Token::End | Token::Semicolon => Ok(None),
@@ -206,11 +207,11 @@ impl Parser {
         }
     }
 
-    fn parse_expression(&mut self) -> Result<Expr> {
+    fn parse_expression(&mut self) -> Result<ExprNode> {
         self.parse_expression_with_precedence(0)
     }
 
-    fn parse_expression_with_precedence(&mut self, precedence: u8) -> Result<Expr> {
+    fn parse_expression_with_precedence(&mut self, precedence: u8) -> Result<ExprNode> {
         let mut expr = self.parse_prefix_expression()?;
 
         loop {
@@ -225,24 +226,24 @@ impl Parser {
         Ok(expr)
     }
 
-    fn parse_prefix_expression(&mut self) -> Result<Expr> {
+    fn parse_prefix_expression(&mut self) -> Result<ExprNode> {
         match self.next_token() {
-            Token::Identifier(id) => Ok(Expr::Identifier(id)),
-            Token::Number(num) => Ok(Expr::Number(num)),
-            Token::QuotedString(s) => Ok(Expr::String(s)),
-            Token::Keyword(Keyword::True) => Ok(Expr::Boolean(true)),
-            Token::Keyword(Keyword::False) => Ok(Expr::Boolean(false)),
+            Token::Identifier(id) => Ok(ExprNode::Identifier(id)),
+            Token::Number(num) => Ok(ExprNode::Number(num)),
+            Token::QuotedString(s) => Ok(ExprNode::String(s)),
+            Token::Keyword(Keyword::True) => Ok(ExprNode::Boolean(true)),
+            Token::Keyword(Keyword::False) => Ok(ExprNode::Boolean(false)),
             Token::Minus => {
                 let expr = self.parse_expression_with_precedence(precedence::PLUS_MINUS)?;
-                Ok(Expr::Unary {
+                Ok(ExprNode::Unary {
                     op: UnaryOperator::Minus,
                     expr: Box::new(expr),
                 })
             }
-            Token::Keyword(Keyword::Null) => Ok(Expr::Null),
+            Token::Keyword(Keyword::Null) => Ok(ExprNode::Null),
             Token::Plus => {
                 let expr = self.parse_expression_with_precedence(precedence::PLUS_MINUS)?;
-                Ok(Expr::Unary {
+                Ok(ExprNode::Unary {
                     op: UnaryOperator::Plus,
                     expr: Box::new(expr),
                 })
@@ -250,13 +251,13 @@ impl Parser {
             Token::LeftParen => {
                 let expr = self.parse_expression()?;
                 self.expect(Token::RightParen)?;
-                Ok(Expr::Grouping(Box::new(expr)))
+                Ok(ExprNode::Grouping(Box::new(expr)))
             }
             found => self.wrong_token("an expression", found)?,
         }
     }
 
-    fn parse_infix_expression(&mut self, left: Expr, precedence: u8) -> Result<Expr> {
+    fn parse_infix_expression(&mut self, left: ExprNode, precedence: u8) -> Result<ExprNode> {
         match self.next_token() {
             token @ (Token::Plus
             | Token::Minus
@@ -288,7 +289,7 @@ impl Parser {
                     Token::Keyword(Keyword::Or) => BinaryOperator::Or,
                     _ => unreachable!(),
                 };
-                Ok(Expr::Binary {
+                Ok(ExprNode::Binary {
                     left: Box::new(left),
                     op: binary_op,
                     right: Box::new(right),
@@ -297,10 +298,10 @@ impl Parser {
             Token::Keyword(Keyword::Is) => {
                 if self.peek_keywords_match(&[Keyword::Null]) {
                     self.advance(1);
-                    Ok(Expr::IsNull(Box::new(left)))
+                    Ok(ExprNode::IsNull(Box::new(left)))
                 } else if self.peek_keywords_match(&[Keyword::Not, Keyword::Null]) {
                     self.advance(2);
-                    Ok(Expr::IsNotNull(Box::new(left)))
+                    Ok(ExprNode::IsNotNull(Box::new(left)))
                 } else {
                     Err(Error::msg(format!(
                         "Expected 'NULL' or 'NOT NULL' but found {:?}",
@@ -477,7 +478,7 @@ pub fn parse_sql(sql: &str) -> Result<Statement> {
 #[cfg(test)]
 mod tests {
     use super::ast::{
-        BinaryOperator, ColumnDefinition, DataType, Expr, Projection, Statement, Table,
+        BinaryOperator, ColumnDefinition, DataType, ExprNode, Projection, Statement, Table,
         UnaryOperator,
     };
     use super::parse_sql;
@@ -558,13 +559,13 @@ mod tests {
         let expected_statement = Statement::Select {
             values: None,
             projections: vec![
-                Projection::UnnamedExpr(Expr::Identifier("id".to_owned())),
+                Projection::UnnamedExpr(ExprNode::Identifier("id".to_owned())),
                 Projection::NamedExpr {
-                    expr: Expr::Identifier("name".to_owned()),
+                    expr: ExprNode::Identifier("name".to_owned()),
                     alias: "full_name".to_owned(),
                 },
                 Projection::NamedExpr {
-                    expr: Expr::Identifier("active".to_owned()),
+                    expr: ExprNode::Identifier("active".to_owned()),
                     alias: "is_active".to_owned(),
                 },
             ],
@@ -587,19 +588,19 @@ mod tests {
         let statement = parse_sql(sql).unwrap();
         let expected_statement = Statement::Select {
             values: None,
-            projections: vec![Projection::UnnamedExpr(Expr::Binary {
-                left: Box::new(Expr::Unary {
+            projections: vec![Projection::UnnamedExpr(ExprNode::Binary {
+                left: Box::new(ExprNode::Unary {
                     op: UnaryOperator::Minus,
-                    expr: Box::new(Expr::Identifier("id".to_owned())),
+                    expr: Box::new(ExprNode::Identifier("id".to_owned())),
                 }),
                 op: BinaryOperator::Plus,
-                right: Box::new(Expr::Binary {
-                    left: Box::new(Expr::Number("2".to_owned())),
+                right: Box::new(ExprNode::Binary {
+                    left: Box::new(ExprNode::Number("2".to_owned())),
                     op: BinaryOperator::Multiply,
-                    right: Box::new(Expr::Grouping(Box::new(Expr::Binary {
-                        left: Box::new(Expr::Number("3".to_owned())),
+                    right: Box::new(ExprNode::Grouping(Box::new(ExprNode::Binary {
+                        left: Box::new(ExprNode::Number("3".to_owned())),
                         op: BinaryOperator::Plus,
-                        right: Box::new(Expr::Number("5".to_owned())),
+                        right: Box::new(ExprNode::Number("5".to_owned())),
                     }))),
                 }),
             })],
@@ -629,10 +630,10 @@ mod tests {
             let statement = parse_sql(&sql).unwrap();
             let expected_statement = Statement::Select {
                 values: None,
-                projections: vec![Projection::UnnamedExpr(Expr::Binary {
-                    left: Box::new(Expr::Identifier("id".to_owned())),
+                projections: vec![Projection::UnnamedExpr(ExprNode::Binary {
+                    left: Box::new(ExprNode::Identifier("id".to_owned())),
                     op,
-                    right: Box::new(Expr::Number("42".to_owned())),
+                    right: Box::new(ExprNode::Number("42".to_owned())),
                 })],
                 from: Table::TableReference {
                     name: "table_name".to_owned(),
@@ -654,19 +655,19 @@ mod tests {
         let statement = parse_sql(sql).unwrap();
         let expected_statement = Statement::Select {
             values: None,
-            projections: vec![Projection::UnnamedExpr(Expr::Binary {
-                left: Box::new(Expr::Unary {
+            projections: vec![Projection::UnnamedExpr(ExprNode::Binary {
+                left: Box::new(ExprNode::Unary {
                     op: UnaryOperator::Minus,
-                    expr: Box::new(Expr::Number("3".to_owned())),
+                    expr: Box::new(ExprNode::Number("3".to_owned())),
                 }),
                 op: BinaryOperator::Plus,
-                right: Box::new(Expr::Binary {
-                    left: Box::new(Expr::Number("2".to_owned())),
+                right: Box::new(ExprNode::Binary {
+                    left: Box::new(ExprNode::Number("2".to_owned())),
                     op: BinaryOperator::Multiply,
-                    right: Box::new(Expr::Grouping(Box::new(Expr::Binary {
-                        left: Box::new(Expr::Number("3".to_owned())),
+                    right: Box::new(ExprNode::Grouping(Box::new(ExprNode::Binary {
+                        left: Box::new(ExprNode::Number("3".to_owned())),
                         op: BinaryOperator::Plus,
-                        right: Box::new(Expr::Number("5".to_owned())),
+                        right: Box::new(ExprNode::Number("5".to_owned())),
                     }))),
                 }),
             })],
@@ -687,14 +688,14 @@ mod tests {
         let expected_statement = Statement::Select {
             values: Some(vec![
                 vec![
-                    Expr::Number("1".to_owned()),
-                    Expr::String("foo".to_owned()),
-                    Expr::Boolean(true),
+                    ExprNode::Number("1".to_owned()),
+                    ExprNode::String("foo".to_owned()),
+                    ExprNode::Boolean(true),
                 ],
                 vec![
-                    Expr::Number("2".to_owned()),
-                    Expr::String("bar".to_owned()),
-                    Expr::Boolean(false),
+                    ExprNode::Number("2".to_owned()),
+                    ExprNode::String("bar".to_owned()),
+                    ExprNode::Boolean(false),
                 ],
             ]),
             projections: vec![],
@@ -720,14 +721,14 @@ mod tests {
             select: Box::new(Statement::Select {
                 values: Some(vec![
                     vec![
-                        Expr::Number("1".to_owned()),
-                        Expr::String("foo".to_owned()),
-                        Expr::Boolean(true),
+                        ExprNode::Number("1".to_owned()),
+                        ExprNode::String("foo".to_owned()),
+                        ExprNode::Boolean(true),
                     ],
                     vec![
-                        Expr::Number("2".to_owned()),
-                        Expr::String("bar".to_owned()),
-                        Expr::Boolean(false),
+                        ExprNode::Number("2".to_owned()),
+                        ExprNode::String("bar".to_owned()),
+                        ExprNode::Boolean(false),
                     ],
                 ]),
                 projections: vec![],
