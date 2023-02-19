@@ -1,14 +1,17 @@
+use std::collections::VecDeque;
+
 use anyhow::{Error, Result};
 
+use crate::analyzer::logical_plan::Query;
 use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
 use crate::catalog::Catalog;
-use crate::parser::ast::{self, BinaryOperator, ExprNode, Projection, Statement};
+use crate::parser::ast::{self, BinaryOperator, ExprNode, Projection, SelectStatement, Statement};
 
-pub mod query;
+pub mod logical_plan;
 
-use query::Query;
+use logical_plan::LogicalPlan;
 
-use self::query::{DataSource, Expr, QueryType};
+use self::logical_plan::{LogicalExpr, TableReference};
 
 pub struct Analyzer<'a> {
     catalog: &'a Catalog<'a>,
@@ -19,22 +22,17 @@ impl<'a> Analyzer<'a> {
         Self { catalog }
     }
 
-    pub fn analyze(&self, query: ast::Statement) -> Result<Query> {
+    pub fn analyze(&self, query: ast::Statement) -> Result<LogicalPlan> {
         match query {
-            Statement::Select {
-                values,
-                projections,
-                from,
-                filter,
-            } => self.analyze_select(values, projections, from, filter),
-            Statement::Insert { into, select } => self.analyze_insert(into, *select),
+            Statement::Select(select) => Ok(LogicalPlan::Select(self.analyze_select(select)?)),
+            Statement::Insert { into, select } => self.analyze_insert(into, select),
             _ => unreachable!(),
         }
     }
 
-    fn analyze_insert(&self, into: ast::Table, select: Statement) -> Result<Query> {
+    fn analyze_insert(&self, into: ast::Table, select: SelectStatement) -> Result<LogicalPlan> {
         let (table_id, schema) = match self.analyze_table(into)? {
-            DataSource::Table {
+            TableReference::BaseTable {
                 table_id,
                 name: _,
                 schema,
@@ -42,7 +40,7 @@ impl<'a> Analyzer<'a> {
             _ => unreachable!(),
         };
 
-        let mut query = self.analyze(select)?;
+        let query = self.analyze_select(select)?;
 
         if schema.columns().len() != query.output_schema.columns().len() {
             return Err(Error::msg(format!(
@@ -74,25 +72,25 @@ impl<'a> Analyzer<'a> {
             }
         }
 
-        query.query_type = QueryType::Insert;
-        query.target = Some(table_id);
-        query.target_schema = Some(schema);
-
-        Ok(query)
+        Ok(LogicalPlan::Insert {
+            query,
+            target: table_id,
+            target_schema: schema,
+        })
     }
 
-    fn analyze_select(
-        &self,
-        values: Option<Vec<Vec<ast::ExprNode>>>,
-        projections: Vec<ast::Projection>,
-        from: ast::Table,
-        filter: Option<ast::ExprNode>,
-    ) -> Result<Query> {
+    fn analyze_select(&self, select: SelectStatement) -> Result<Query> {
+        let SelectStatement {
+            values,
+            projections,
+            from,
+            filter,
+        } = select;
         if let Some(values) = values {
             return Self::analyze_values(values);
         }
 
-        let table = self.analyze_table(from)?;
+        let table = self.analyze_tables(from)?;
         let projections_with_specification = self.analyze_projections(projections, &table)?;
 
         let mut projections = vec![];
@@ -117,13 +115,11 @@ impl<'a> Analyzer<'a> {
         };
 
         Ok(Query {
-            query_type: QueryType::Select,
+            values: vec![],
             from: table,
             projections,
             filter,
             output_schema: Schema::new(output_columns),
-            target_schema: None,
-            target: None,
         })
     }
 
@@ -135,11 +131,11 @@ impl<'a> Analyzer<'a> {
         for (row, current_values) in values.into_iter().enumerate() {
             let mut current_expressions = vec![];
             for (col, value) in current_values.into_iter().enumerate() {
-                let (expr, type_id) = Self::analyze_expression(value, &DataSource::EmptyTable)?;
+                let (expr, type_id) = Self::analyze_expression(value, &TableReference::EmptyTable)?;
 
                 if !first_row_added {
                     let column_name = format!("col_{}", col);
-                    let not_null = expr != Expr::Null;
+                    let not_null = expr != LogicalExpr::Null;
                     output_columns.push(ColumnDefinition::new(
                         type_id,
                         column_name,
@@ -180,20 +176,41 @@ impl<'a> Analyzer<'a> {
         }
 
         Ok(Query {
-            query_type: QueryType::Select,
-            from: DataSource::Values {
-                values: expressions,
-                schema: Schema::new(output_columns.clone()),
-            },
+            from: TableReference::EmptyTable,
             projections: vec![],
             filter: None,
+            values: expressions,
             output_schema: Schema::new(output_columns),
-            target_schema: None,
-            target: None,
         })
     }
 
-    fn analyze_table(&self, table: ast::Table) -> Result<DataSource> {
+    fn analyze_tables(&self, mut tables: VecDeque<ast::Table>) -> Result<TableReference> {
+        if tables.is_empty() {
+            Ok(TableReference::EmptyTable)
+        } else if tables.len() > 1 {
+            let left = self.analyze_table(tables.pop_front().unwrap())?;
+            let right = self.analyze_table(tables.pop_front().unwrap())?;
+
+            let mut result = TableReference::CrossJoin {
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+            while let Some(table) = tables.pop_front() {
+                let table = self.analyze_table(table)?;
+
+                result = TableReference::CrossJoin {
+                    left: Box::new(result),
+                    right: Box::new(table),
+                }
+            }
+
+            Ok(result)
+        } else {
+            self.analyze_table(tables.pop_front().unwrap())
+        }
+    }
+
+    fn analyze_table(&self, table: ast::Table) -> Result<TableReference> {
         match table {
             ast::Table::TableReference { name, alias } => {
                 let table_id = self
@@ -201,50 +218,32 @@ impl<'a> Analyzer<'a> {
                     .get_table_id(&name)
                     .ok_or_else(|| Error::msg(format!("Could not find table {}", name)))?;
                 let schema = self.catalog.get_schema(&name).unwrap();
-                Ok(DataSource::Table {
+                Ok(TableReference::BaseTable {
                     table_id,
                     name: alias.unwrap_or(name),
                     schema,
                 })
             }
-            ast::Table::EmptyTable => Ok(DataSource::EmptyTable),
         }
     }
 
     fn analyze_projections(
         &self,
         projections: Vec<ast::Projection>,
-        scope: &DataSource,
-    ) -> Result<Vec<(Expr, String, TypeId)>> {
+        scope: &TableReference,
+    ) -> Result<Vec<(LogicalExpr, String, TypeId)>> {
         let mut result = vec![];
 
         for projection in projections.into_iter() {
             match projection {
                 Projection::Wildcard => {
-                    for col in scope.schema().columns() {
-                        result.push((
-                            Expr::ColumnReference(col.column_offset()),
-                            col.column_name().to_owned(),
-                            col.type_id(),
-                        ))
-                    }
+                    let mut wildcard = Self::get_all_columns(scope, None);
+                    result.append(&mut wildcard);
                 }
-                Projection::QualifiedWildcard { table } => match scope {
-                    DataSource::Table {
-                        table_id: _,
-                        name,
-                        schema,
-                    } if name == &table => {
-                        for col in schema.columns() {
-                            result.push((
-                                Expr::ColumnReference(col.column_offset()),
-                                format!("{}.{}", name, col.column_name().to_owned()),
-                                col.type_id(),
-                            ))
-                        }
-                    }
-                    _ => return Err(Error::msg(format!("Could not find table '{}'", table))),
-                },
+                Projection::QualifiedWildcard { table } => {
+                    let mut wildcard = Self::get_all_columns(scope, Some(table));
+                    result.append(&mut wildcard);
+                }
                 _ => result.push(self.analyze_projection(projection, scope)?),
             }
         }
@@ -255,8 +254,8 @@ impl<'a> Analyzer<'a> {
     fn analyze_projection(
         &self,
         projection: ast::Projection,
-        scope: &DataSource,
-    ) -> Result<(Expr, String, TypeId)> {
+        scope: &TableReference,
+    ) -> Result<(LogicalExpr, String, TypeId)> {
         match projection {
             Projection::UnnamedExpr(expr) => {
                 let alias = expr.to_string();
@@ -273,39 +272,37 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn analyze_expression(expr: ast::ExprNode, scope: &DataSource) -> Result<(Expr, TypeId)> {
+    fn analyze_expression(
+        expr: ast::ExprNode,
+        scope: &TableReference,
+    ) -> Result<(LogicalExpr, TypeId)> {
         match expr {
-            ExprNode::Identifier(name) => {
-                let column = scope
-                    .schema()
-                    .find_column(&name)
-                    .ok_or_else(|| Error::msg(format!("Could not find column {}", name)))?;
-                let column_offset = column.column_offset();
-                let type_id = column.type_id();
-                Ok((Expr::ColumnReference(column_offset), type_id))
-            }
-            ExprNode::QualifiedIdentifier(table, column) => match scope {
-                DataSource::Table {
-                    table_id: _,
-                    name,
-                    schema: _,
-                } if name == &table => {
-                    let column = scope
-                        .schema()
-                        .find_column(&column)
-                        .ok_or_else(|| Error::msg(format!("Could not find column {}", column)))?;
-                    let column_offset = column.column_offset();
-                    let type_id = column.type_id();
-                    Ok((Expr::ColumnReference(column_offset), type_id))
+            ExprNode::Identifier(column_name) => {
+                let column = Self::identify_column(scope, None, &column_name)?;
+                if let Some(res) = column {
+                    Ok(res)
+                } else {
+                    Err(Error::msg(format!("Could not find column {}", column_name)))
                 }
-                _ => return Err(Error::msg(format!("Could not find table '{}'", table))),
-            },
+            }
+            ExprNode::QualifiedIdentifier(table, column_name) => {
+                let column = Self::identify_column(scope, Some(&table), &column_name)?;
+                if let Some(res) = column {
+                    Ok(res)
+                } else {
+                    Err(Error::msg(format!(
+                        "Could not find column {}.{}",
+                        table, column_name
+                    )))
+                }
+            }
+
             ExprNode::Number(number) => {
                 let num = number.parse::<i32>()?;
-                Ok((Expr::Integer(num), TypeId::Integer))
+                Ok((LogicalExpr::Integer(num), TypeId::Integer))
             }
-            ExprNode::String(s) => Ok((Expr::String(s), TypeId::Text)),
-            ExprNode::Boolean(val) => Ok((Expr::Boolean(val), TypeId::Boolean)),
+            ExprNode::String(s) => Ok((LogicalExpr::String(s), TypeId::Text)),
+            ExprNode::Boolean(val) => Ok((LogicalExpr::Boolean(val), TypeId::Boolean)),
             ExprNode::Grouping(expr) => Self::analyze_expression(*expr, scope),
             ExprNode::Binary { left, op, right } => {
                 let (left, left_type) = Self::analyze_expression(*left, scope)?;
@@ -353,7 +350,7 @@ impl<'a> Analyzer<'a> {
                     }
                 };
                 Ok((
-                    Expr::Binary {
+                    LogicalExpr::Binary {
                         left: Box::new(left),
                         op,
                         right: Box::new(right),
@@ -370,7 +367,7 @@ impl<'a> Analyzer<'a> {
                     )))
                 } else {
                     Ok((
-                        Expr::Unary {
+                        LogicalExpr::Unary {
                             op,
                             expr: Box::new(expr),
                         },
@@ -380,13 +377,95 @@ impl<'a> Analyzer<'a> {
             }
             ExprNode::IsNull(expr) => {
                 let (expr, _) = Self::analyze_expression(*expr, scope)?;
-                Ok((Expr::IsNull(Box::new(expr)), TypeId::Boolean))
+                Ok((LogicalExpr::IsNull(Box::new(expr)), TypeId::Boolean))
             }
             ExprNode::IsNotNull(expr) => {
                 let (expr, _) = Self::analyze_expression(*expr, scope)?;
-                Ok((Expr::IsNotNull(Box::new(expr)), TypeId::Boolean))
+                Ok((LogicalExpr::IsNotNull(Box::new(expr)), TypeId::Boolean))
             }
-            ExprNode::Null => Ok((Expr::Null, TypeId::Unknown)),
+            ExprNode::Null => Ok((LogicalExpr::Null, TypeId::Unknown)),
+        }
+    }
+
+    fn identify_column(
+        scope: &TableReference,
+        table: Option<&str>,
+        column: &str,
+    ) -> Result<Option<(LogicalExpr, TypeId)>> {
+        match scope {
+            TableReference::BaseTable {
+                table_id: _,
+                name,
+                schema,
+            } => {
+                if let Some(table) = table {
+                    if name != table {
+                        return Ok(None);
+                    }
+                }
+                let column = schema.find_column(column).map(|col_def| {
+                    (
+                        LogicalExpr::Column(vec![name.clone(), col_def.column_name().to_owned()]),
+                        col_def.type_id(),
+                    )
+                });
+                Ok(column)
+            }
+            TableReference::CrossJoin { left, right } => {
+                let left = Self::identify_column(left, table, column)?;
+                let right = Self::identify_column(right, table, column)?;
+
+                if let Some(left) = left {
+                    if right.is_some() {
+                        Err(Error::msg(format!("Column '{}' is ambiguous", column)))
+                    } else {
+                        Ok(Some(left))
+                    }
+                } else {
+                    Ok(right)
+                }
+            }
+            TableReference::EmptyTable => Ok(None),
+        }
+    }
+
+    fn get_all_columns(
+        scope: &TableReference,
+        table: Option<String>,
+    ) -> Vec<(LogicalExpr, String, TypeId)> {
+        match scope {
+            TableReference::BaseTable {
+                table_id: _,
+                name: table_name,
+                schema,
+            } => {
+                if let Some(table) = table {
+                    if table_name != &table {
+                        return vec![];
+                    }
+                }
+                schema
+                    .columns()
+                    .iter()
+                    .map(|col_def| {
+                        (
+                            LogicalExpr::Column(vec![
+                                table_name.clone(),
+                                col_def.column_name().to_owned(),
+                            ]),
+                            format!("{}.{}", table_name, col_def.column_name()),
+                            col_def.type_id(),
+                        )
+                    })
+                    .collect()
+            }
+            TableReference::CrossJoin { left, right } => {
+                let mut left_columns = Self::get_all_columns(left, table.clone());
+                let mut right_columns = Self::get_all_columns(right, table.clone());
+                left_columns.append(&mut right_columns);
+                left_columns
+            }
+            TableReference::EmptyTable => vec![],
         }
     }
 }
@@ -395,8 +474,9 @@ impl<'a> Analyzer<'a> {
 mod tests {
     use tempfile::tempdir;
 
-    use super::query::{DataSource, Expr, Query, QueryType};
+    use super::logical_plan::{LogicalExpr, LogicalPlan, TableReference};
     use super::Analyzer;
+    use crate::analyzer::logical_plan::Query;
     use crate::buffer::buffer_manager::BufferManager;
     use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::catalog::Catalog;
@@ -426,22 +506,23 @@ mod tests {
         let analyzer = Analyzer::new(&catalog);
         let query = analyzer.analyze(statement).unwrap();
 
-        let expected_query = Query {
-            query_type: QueryType::Select,
-            from: DataSource::Table {
+        let expected_query = LogicalPlan::Select(Query {
+            from: TableReference::BaseTable {
                 table_id,
                 name: "accounts".to_owned(),
                 schema,
             },
-            projections: vec![Expr::ColumnReference(0), Expr::ColumnReference(1)],
+            projections: vec![
+                LogicalExpr::Column(vec!["accounts".to_owned(), "id".to_owned()]),
+                LogicalExpr::Column(vec!["accounts".to_owned(), "name".to_owned()]),
+            ],
             filter: None,
             output_schema: Schema::new(vec![
-                ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, false),
-                ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, false),
+                ColumnDefinition::new(TypeId::Integer, "accounts.id".to_owned(), 0, false),
+                ColumnDefinition::new(TypeId::Text, "accounts.name".to_owned(), 1, false),
             ]),
-            target_schema: None,
-            target: None,
-        };
+            values: vec![],
+        });
 
         assert_eq!(query, expected_query);
     }
@@ -468,22 +549,23 @@ mod tests {
         let analyzer = Analyzer::new(&catalog);
         let query = analyzer.analyze(statement).unwrap();
 
-        let expected_query = Query {
-            query_type: QueryType::Select,
-            from: DataSource::Table {
+        let expected_query = LogicalPlan::Select(Query {
+            from: TableReference::BaseTable {
                 table_id,
                 name: "acc".to_owned(),
                 schema,
             },
-            projections: vec![Expr::ColumnReference(0), Expr::ColumnReference(1)],
+            projections: vec![
+                LogicalExpr::Column(vec!["acc".to_owned(), "id".to_owned()]),
+                LogicalExpr::Column(vec!["acc".to_owned(), "name".to_owned()]),
+            ],
             filter: None,
             output_schema: Schema::new(vec![
                 ColumnDefinition::new(TypeId::Integer, "acc.id".to_owned(), 0, false),
                 ColumnDefinition::new(TypeId::Text, "acc.name".to_owned(), 1, false),
             ]),
-            target_schema: None,
-            target: None,
-        };
+            values: vec![],
+        });
 
         assert_eq!(query, expected_query);
     }
@@ -512,30 +594,35 @@ mod tests {
         let analyzer = Analyzer::new(&catalog);
         let query = analyzer.analyze(statement).unwrap();
 
-        let expected_query = Query {
-            query_type: QueryType::Select,
-            from: DataSource::Table {
+        let expected_query = LogicalPlan::Select(Query {
+            from: TableReference::BaseTable {
                 table_id,
                 name: "accounts".to_owned(),
                 schema,
             },
             projections: vec![
-                Expr::Unary {
+                LogicalExpr::Unary {
                     op: UnaryOperator::Minus,
-                    expr: Box::new(Expr::ColumnReference(0)),
+                    expr: Box::new(LogicalExpr::Column(vec![
+                        "accounts".to_owned(),
+                        "id".to_owned(),
+                    ])),
                 },
-                Expr::Binary {
-                    left: Box::new(Expr::ColumnReference(0)),
+                LogicalExpr::Binary {
+                    left: Box::new(LogicalExpr::Column(vec![
+                        "accounts".to_owned(),
+                        "id".to_owned(),
+                    ])),
                     op: BinaryOperator::Plus,
-                    right: Box::new(Expr::Integer(1)),
+                    right: Box::new(LogicalExpr::Integer(1)),
                 },
-                Expr::Binary {
-                    left: Box::new(Expr::Integer(2)),
+                LogicalExpr::Binary {
+                    left: Box::new(LogicalExpr::Integer(2)),
                     op: BinaryOperator::Multiply,
-                    right: Box::new(Expr::Binary {
-                        left: Box::new(Expr::Integer(3)),
+                    right: Box::new(LogicalExpr::Binary {
+                        left: Box::new(LogicalExpr::Integer(3)),
                         op: BinaryOperator::Plus,
-                        right: Box::new(Expr::Integer(5)),
+                        right: Box::new(LogicalExpr::Integer(5)),
                     }),
                 },
             ],
@@ -545,9 +632,8 @@ mod tests {
                 ColumnDefinition::new(TypeId::Integer, "id + 1".to_owned(), 1, false),
                 ColumnDefinition::new(TypeId::Integer, "2 * (3 + 5)".to_owned(), 2, false),
             ]),
-            target_schema: None,
-            target: None,
-        };
+            values: vec![],
+        });
 
         assert_eq!(query, expected_query);
     }
@@ -573,31 +659,26 @@ mod tests {
             ColumnDefinition::new(TypeId::Boolean, "col_3".to_owned(), 3, true),
         ]);
 
-        let expected_query = Query {
-            query_type: QueryType::Select,
-            from: DataSource::Values {
-                values: vec![
-                    vec![
-                        Expr::Integer(1),
-                        Expr::Null,
-                        Expr::String("foo".to_owned()),
-                        Expr::Boolean(true),
-                    ],
-                    vec![
-                        Expr::Integer(2),
-                        Expr::String("bar".to_owned()),
-                        Expr::Null,
-                        Expr::Boolean(false),
-                    ],
+        let expected_query = LogicalPlan::Select(Query {
+            from: TableReference::EmptyTable,
+            values: vec![
+                vec![
+                    LogicalExpr::Integer(1),
+                    LogicalExpr::Null,
+                    LogicalExpr::String("foo".to_owned()),
+                    LogicalExpr::Boolean(true),
                 ],
-                schema: expected_output_schema.clone(),
-            },
+                vec![
+                    LogicalExpr::Integer(2),
+                    LogicalExpr::String("bar".to_owned()),
+                    LogicalExpr::Null,
+                    LogicalExpr::Boolean(false),
+                ],
+            ],
             filter: None,
             projections: vec![],
             output_schema: expected_output_schema,
-            target_schema: None,
-            target: None,
-        };
+        });
 
         assert_eq!(query, expected_query);
     }

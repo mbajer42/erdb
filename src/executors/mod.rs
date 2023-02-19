@@ -4,18 +4,20 @@ use anyhow::Result;
 
 use self::filter_executor::FilterExecutor;
 use self::insert_executor::InsertExecutor;
+use self::nested_loop_join_executor::NestedLoopJoinExecutor;
 use self::projection_executor::ProjectionExecutor;
 use self::seq_scan_executor::SeqScanExecutor;
 use self::values_executor::ValuesExecutor;
 use crate::buffer::buffer_manager::BufferManager;
 use crate::catalog::schema::Schema;
 use crate::common::TableId;
-use crate::planner::plans::PhysicalPlan;
+use crate::planner::physical_plan::PhysicalPlan;
 use crate::storage::heap::table::Table;
 use crate::tuple::Tuple;
 
 mod filter_executor;
 mod insert_executor;
+mod nested_loop_join_executor;
 mod projection_executor;
 mod seq_scan_executor;
 mod values_executor;
@@ -50,6 +52,15 @@ impl<'a> ExecutorFactory<'a> {
                 table_id,
                 output_schema,
             } => (*table_id, output_schema.clone()),
+            PhysicalPlan::Join {
+                left,
+                right,
+                output_schema: _,
+            } => {
+                self.insert_tables(left);
+                self.insert_tables(right);
+                return;
+            }
             PhysicalPlan::InsertPlan {
                 target,
                 target_schema,
@@ -76,6 +87,20 @@ impl<'a> ExecutorFactory<'a> {
                 table_id,
                 output_schema: _,
             } => Ok(Box::new(self.create_seq_scan_executor(table_id)?)),
+            PhysicalPlan::Join {
+                left,
+                right,
+                output_schema,
+            } => {
+                let left_child = self.create_executor_internal(*left)?;
+                let right_child = self.create_executor_internal(*right)?;
+
+                Ok(Box::new(NestedLoopJoinExecutor::new(
+                    left_child,
+                    right_child,
+                    output_schema,
+                )))
+            }
             PhysicalPlan::Projection {
                 projections,
                 child,

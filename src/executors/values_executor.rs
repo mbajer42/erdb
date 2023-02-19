@@ -1,8 +1,8 @@
 use anyhow::Result;
 
 use super::Executor;
-use crate::analyzer::query::Expr;
 use crate::catalog::schema::Schema;
+use crate::planner::physical_plan::Expr;
 use crate::tuple::Tuple;
 
 pub struct ValuesExecutor {
@@ -28,10 +28,7 @@ impl Executor for ValuesExecutor {
 
     fn next(&mut self) -> Option<Result<Tuple>> {
         if let Some(exprs) = self.values.get(self.cursor) {
-            let values = exprs
-                .iter()
-                .map(|expr| expr.evaluate(&Tuple::new(vec![])))
-                .collect();
+            let values = exprs.iter().map(|expr| expr.evaluate(&[])).collect();
             self.cursor += 1;
             Some(Ok(Tuple::new(values)))
         } else {

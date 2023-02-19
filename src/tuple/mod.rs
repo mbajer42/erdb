@@ -2,8 +2,9 @@ use self::value::Value;
 
 pub mod value;
 
+#[derive(Debug, PartialEq)]
 pub struct Tuple {
-    values: Vec<Value>,
+    pub values: Vec<Value>,
     has_null: bool,
 }
 

@@ -126,7 +126,7 @@ fn handle_sql_statement(
             let analyzer = Analyzer::new(catalog);
             let query = analyzer.analyze(query)?;
             let planner = Planner::new();
-            let plan = planner.plan_query(query);
+            let plan = planner.prepare_logical_plan(query)?;
             let mut executor_factory = ExecutorFactory::new(buffer_manager);
             let executor = executor_factory.create_executor(plan)?;
             let mut printer = Printer::new(executor);

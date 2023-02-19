@@ -1,8 +1,8 @@
 use anyhow::Result;
 
 use super::Executor;
-use crate::analyzer::query::Expr;
 use crate::catalog::schema::Schema;
+use crate::planner::physical_plan::Expr;
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
 
@@ -19,7 +19,7 @@ impl<'a> FilterExecutor<'a> {
     fn next(&mut self) -> Result<Option<Tuple>> {
         loop {
             if let Some(tuple) = self.child.next().transpose()? {
-                match self.filter.evaluate(&tuple) {
+                match self.filter.evaluate(&[&tuple]) {
                     Value::Boolean(b) => {
                         if b {
                             return Ok(Some(tuple));
@@ -68,7 +68,7 @@ mod tests {
         let query = parse_sql(sql).unwrap();
         let query = analyzer.analyze(query).unwrap();
         let planner = Planner::new();
-        let plan = planner.plan_query(query);
+        let plan = planner.prepare_logical_plan(query).unwrap();
         let mut executor_factory = ExecutorFactory::new(buffer_manager);
         let mut executor = executor_factory.create_executor(plan).unwrap();
 

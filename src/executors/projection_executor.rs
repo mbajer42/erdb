@@ -1,8 +1,8 @@
 use anyhow::Result;
 
 use super::Executor;
-use crate::analyzer::query::Expr;
 use crate::catalog::schema::Schema;
+use crate::planner::physical_plan::Expr;
 use crate::tuple::Tuple;
 
 pub struct ProjectionExecutor<'a> {
@@ -32,7 +32,7 @@ impl<'a> Executor for ProjectionExecutor<'a> {
                 let values = self
                     .projections
                     .iter()
-                    .map(|expr| expr.evaluate(&tuple))
+                    .map(|expr| expr.evaluate(&[&tuple]))
                     .collect();
                 Tuple::new(values)
             })
@@ -71,7 +71,7 @@ mod tests {
         let query = parse_sql(sql).unwrap();
         let query = analyzer.analyze(query).unwrap();
         let planner = Planner::new();
-        let plan = planner.plan_query(query);
+        let plan = planner.prepare_logical_plan(query).unwrap();
         let mut executor_factory = ExecutorFactory::new(buffer_manager);
         let mut executor = executor_factory.create_executor(plan).unwrap();
         let result = executor.next().transpose().unwrap();

@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fmt::Display;
 
 #[derive(Debug, PartialEq)]
@@ -112,7 +113,6 @@ impl Display for ExprNode {
 #[derive(Debug, PartialEq)]
 pub enum Table {
     TableReference { name: String, alias: Option<String> },
-    EmptyTable,
 }
 
 #[derive(Debug, PartialEq)]
@@ -129,14 +129,17 @@ pub enum Statement {
         name: String,
         columns: Vec<ColumnDefinition>,
     },
-    Select {
-        values: Option<Vec<Vec<ExprNode>>>,
-        projections: Vec<Projection>,
-        from: Table,
-        filter: Option<ExprNode>,
-    },
+    Select(SelectStatement),
     Insert {
         into: Table,
-        select: Box<Statement>,
+        select: SelectStatement,
     },
+}
+
+#[derive(Debug, PartialEq)]
+pub struct SelectStatement {
+    pub values: Option<Vec<Vec<ExprNode>>>,
+    pub projections: Vec<Projection>,
+    pub from: VecDeque<Table>,
+    pub filter: Option<ExprNode>,
 }

@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use anyhow::{Error, Result};
 
 use self::ast::{
-    BinaryOperator, ColumnDefinition, DataType, ExprNode, Projection, Statement, Table,
-    UnaryOperator,
+    BinaryOperator, ColumnDefinition, DataType, ExprNode, Projection, SelectStatement, Statement,
+    Table, UnaryOperator,
 };
 use self::token::{tokenize, Keyword, Token};
 
@@ -57,8 +57,8 @@ impl Parser {
         match self.next_token() {
             Token::Keyword(keyword) => match keyword {
                 Keyword::Create => self.parse_create_statement(),
-                Keyword::Select => self.parse_select_statement(),
-                Keyword::Values => self.parse_values(),
+                Keyword::Select => Ok(Statement::Select(self.parse_select_statement()?)),
+                Keyword::Values => Ok(Statement::Select(self.parse_values()?)),
                 Keyword::Insert => self.parse_insert(),
                 found => self.wrong_keyword("a statement", found)?,
             },
@@ -88,11 +88,11 @@ impl Parser {
 
         Ok(Statement::Insert {
             into: table,
-            select: Box::new(select),
+            select,
         })
     }
 
-    fn parse_values(&mut self) -> Result<Statement> {
+    fn parse_values(&mut self) -> Result<SelectStatement> {
         let mut values = vec![];
         loop {
             self.expect(Token::LeftParen)?;
@@ -121,21 +121,21 @@ impl Parser {
             }
         }
 
-        Ok(Statement::Select {
+        Ok(SelectStatement {
             values: Some(values),
             projections: vec![],
-            from: Table::EmptyTable,
+            from: vec![].into(),
             filter: None,
         })
     }
 
-    fn parse_select_statement(&mut self) -> Result<Statement> {
+    fn parse_select_statement(&mut self) -> Result<SelectStatement> {
         let projections = self.parse_projections()?;
 
-        let from = self.parse_table()?;
+        let from = self.parse_tables()?;
         let filter = self.parse_filter()?;
 
-        Ok(Statement::Select {
+        Ok(SelectStatement {
             values: None,
             projections,
             from,
@@ -151,27 +151,40 @@ impl Parser {
         }
     }
 
-    fn parse_table(&mut self) -> Result<Table> {
+    fn parse_tables(&mut self) -> Result<VecDeque<Table>> {
+        let mut tables = VecDeque::new();
+
         if self.peek_token() == &Token::Semicolon || self.peek_token() == &Token::End {
-            return Ok(Table::EmptyTable);
+            return Ok(tables);
         }
 
         self.expect(Token::Keyword(Keyword::From))?;
-        let table_name = self.parse_identifier()?;
 
-        let alias = if self.peek_token() == &Token::Keyword(Keyword::As) {
-            self.next_token();
-            Some(self.parse_identifier()?)
-        } else if let Token::Identifier(_s) = self.peek_token() {
-            Some(self.parse_identifier()?)
-        } else {
-            None
-        };
+        loop {
+            let table_name = self.parse_identifier()?;
+            let alias = if self.peek_token() == &Token::Keyword(Keyword::As) {
+                self.next_token();
+                Some(self.parse_identifier()?)
+            } else if let Token::Identifier(_s) = self.peek_token() {
+                Some(self.parse_identifier()?)
+            } else {
+                None
+            };
 
-        Ok(Table::TableReference {
-            name: table_name,
-            alias,
-        })
+            tables.push_back(Table::TableReference {
+                name: table_name,
+                alias,
+            });
+
+            if self.peek_token() == &Token::Comma {
+                self.next_token();
+                continue;
+            } else {
+                break;
+            }
+        }
+
+        Ok(tables)
     }
 
     fn parse_projections(&mut self) -> Result<Vec<Projection>> {
@@ -507,6 +520,7 @@ mod tests {
         UnaryOperator,
     };
     use super::parse_sql;
+    use crate::parser::ast::SelectStatement;
 
     #[test]
     fn can_parse_create_table_statements() {
@@ -560,15 +574,16 @@ mod tests {
         ";
 
         let statement = parse_sql(sql).unwrap();
-        let expected_statement = Statement::Select {
+        let expected_statement = Statement::Select(SelectStatement {
             values: None,
             projections: vec![Projection::Wildcard],
-            from: Table::TableReference {
+            from: vec![Table::TableReference {
                 name: "accounts".to_owned(),
                 alias: None,
-            },
+            }]
+            .into(),
             filter: None,
-        };
+        });
 
         assert_eq!(statement, expected_statement);
     }
@@ -581,7 +596,7 @@ mod tests {
         ";
 
         let statement = parse_sql(sql).unwrap();
-        let expected_statement = Statement::Select {
+        let expected_statement = Statement::Select(SelectStatement {
             values: None,
             projections: vec![
                 Projection::UnnamedExpr(ExprNode::Identifier("id".to_owned())),
@@ -594,12 +609,13 @@ mod tests {
                     alias: "is_active".to_owned(),
                 },
             ],
-            from: Table::TableReference {
+            from: vec![Table::TableReference {
                 name: "table1".to_owned(),
                 alias: Some("table_alias".to_owned()),
-            },
+            }]
+            .into(),
             filter: None,
-        };
+        });
 
         assert_eq!(statement, expected_statement);
     }
@@ -611,7 +627,7 @@ mod tests {
         ";
 
         let statement = parse_sql(sql).unwrap();
-        let expected_statement = Statement::Select {
+        let expected_statement = Statement::Select(SelectStatement {
             values: None,
             projections: vec![Projection::UnnamedExpr(ExprNode::Binary {
                 left: Box::new(ExprNode::Unary {
@@ -629,12 +645,13 @@ mod tests {
                     }))),
                 }),
             })],
-            from: Table::TableReference {
+            from: vec![Table::TableReference {
                 name: "table_1".to_owned(),
                 alias: None,
-            },
+            }]
+            .into(),
             filter: None,
-        };
+        });
 
         assert_eq!(statement, expected_statement);
     }
@@ -653,19 +670,20 @@ mod tests {
         for op in comparison_operators {
             let sql = format!("select id {} 42 from table_name;", op);
             let statement = parse_sql(&sql).unwrap();
-            let expected_statement = Statement::Select {
+            let expected_statement = Statement::Select(SelectStatement {
                 values: None,
                 projections: vec![Projection::UnnamedExpr(ExprNode::Binary {
                     left: Box::new(ExprNode::Identifier("id".to_owned())),
                     op,
                     right: Box::new(ExprNode::Number("42".to_owned())),
                 })],
-                from: Table::TableReference {
+                from: vec![Table::TableReference {
                     name: "table_name".to_owned(),
                     alias: None,
-                },
+                }]
+                .into(),
                 filter: None,
-            };
+            });
 
             assert_eq!(statement, expected_statement);
         }
@@ -678,7 +696,7 @@ mod tests {
         ";
 
         let statement = parse_sql(sql).unwrap();
-        let expected_statement = Statement::Select {
+        let expected_statement = Statement::Select(SelectStatement {
             values: None,
             projections: vec![Projection::UnnamedExpr(ExprNode::Binary {
                 left: Box::new(ExprNode::Unary {
@@ -696,9 +714,9 @@ mod tests {
                     }))),
                 }),
             })],
-            from: Table::EmptyTable,
+            from: vec![].into(),
             filter: None,
-        };
+        });
 
         assert_eq!(statement, expected_statement);
     }
@@ -710,7 +728,7 @@ mod tests {
         ";
 
         let statement = parse_sql(sql).unwrap();
-        let expected_statement = Statement::Select {
+        let expected_statement = Statement::Select(SelectStatement {
             values: Some(vec![
                 vec![
                     ExprNode::Number("1".to_owned()),
@@ -724,9 +742,9 @@ mod tests {
                 ],
             ]),
             projections: vec![],
-            from: Table::EmptyTable,
+            from: vec![].into(),
             filter: None,
-        };
+        });
 
         assert_eq!(statement, expected_statement);
     }
@@ -743,7 +761,7 @@ mod tests {
                 name: "table_name".to_owned(),
                 alias: None,
             },
-            select: Box::new(Statement::Select {
+            select: SelectStatement {
                 values: Some(vec![
                     vec![
                         ExprNode::Number("1".to_owned()),
@@ -757,9 +775,9 @@ mod tests {
                     ],
                 ]),
                 projections: vec![],
-                from: Table::EmptyTable,
+                from: vec![].into(),
                 filter: None,
-            }),
+            },
         };
 
         assert_eq!(statement, expected_statement);
@@ -777,15 +795,16 @@ mod tests {
                 name: "new_table".to_owned(),
                 alias: None,
             },
-            select: Box::new(Statement::Select {
+            select: SelectStatement {
                 values: None,
                 projections: vec![Projection::Wildcard],
-                from: Table::TableReference {
+                from: vec![Table::TableReference {
                     name: "old_table".to_owned(),
                     alias: None,
-                },
+                }]
+                .into(),
                 filter: None,
-            }),
+            },
         };
 
         assert_eq!(statement, expected_statement);

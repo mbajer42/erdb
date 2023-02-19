@@ -126,4 +126,12 @@ impl Schema {
     pub fn columns(&self) -> &[ColumnDefinition] {
         &self.columns
     }
+
+    /// Prepends each column name. This is used to give the column names a precise name.
+    /// E.g. if a table 'tbl' has the column 'id', then prepend it will give it the name 'tbl.id'
+    pub fn prepend_column_name(&mut self, prepend: &str) {
+        for col in self.columns.iter_mut() {
+            col.column_name = format!("{}.{}", prepend, col.column_name);
+        }
+    }
 }
