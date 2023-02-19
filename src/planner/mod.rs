@@ -50,7 +50,11 @@ impl Planner {
 
     fn plan_table_reference(&self, table: DataSource) -> PhysicalPlan {
         match table {
-            DataSource::Table { table_id, schema } => PhysicalPlan::SequentialScan {
+            DataSource::Table {
+                table_id,
+                name: _,
+                schema,
+            } => PhysicalPlan::SequentialScan {
                 table_id,
                 output_schema: schema,
             },

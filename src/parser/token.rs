@@ -66,6 +66,8 @@ pub enum Token {
     Number(String),
     /// a quoted string
     QuotedString(String),
+    /// Dot '.'
+    Dot,
     /// Comma ','
     Comma,
     /// Left parenthesis '('
@@ -169,6 +171,7 @@ impl<'a> Tokenizer<'a> {
                 ')' => Token::RightParen,
                 ';' => Token::Semicolon,
                 ',' => Token::Comma,
+                '.' => Token::Dot,
                 '*' => Token::Star,
                 '+' => Token::Plus,
                 '-' => Token::Minus,

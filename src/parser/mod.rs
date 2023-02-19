@@ -46,6 +46,13 @@ impl Parser {
         }
     }
 
+    fn peek_token_ahead(&self, ahead: usize) -> &Token {
+        match self.tokens.get(ahead) {
+            Some(token) => token,
+            None => &Token::End,
+        }
+    }
+
     fn parse_statement(&mut self) -> Result<Statement> {
         match self.next_token() {
             Token::Keyword(keyword) => match keyword {
@@ -183,10 +190,20 @@ impl Parser {
     }
 
     fn parse_projection(&mut self) -> Result<Projection> {
-        match self.peek_token() {
+        let peek1 = self.peek_token_ahead(0);
+        let peek2 = self.peek_token_ahead(1);
+        let peek3 = self.peek_token_ahead(2);
+        match peek1 {
             Token::Star => {
                 self.next_token();
                 Ok(Projection::Wildcard)
+            }
+            // SELECT a.* FROM a
+            Token::Identifier(_) if peek2 == &Token::Dot && peek3 == &Token::Star => {
+                let table_name = self.parse_identifier()?;
+                let _dot = self.next_token();
+                let _star = self.next_token();
+                Ok(Projection::QualifiedWildcard { table: table_name })
             }
             _ => {
                 let expr = self.parse_expression()?;
@@ -228,7 +245,15 @@ impl Parser {
 
     fn parse_prefix_expression(&mut self) -> Result<ExprNode> {
         match self.next_token() {
-            Token::Identifier(id) => Ok(ExprNode::Identifier(id)),
+            Token::Identifier(id) => {
+                if self.peek_token() == &Token::Dot {
+                    let _dot = self.next_token();
+                    let col = self.parse_identifier()?;
+                    Ok(ExprNode::QualifiedIdentifier(id, col))
+                } else {
+                    Ok(ExprNode::Identifier(id))
+                }
+            }
             Token::Number(num) => Ok(ExprNode::Number(num)),
             Token::QuotedString(s) => Ok(ExprNode::String(s)),
             Token::Keyword(Keyword::True) => Ok(ExprNode::Boolean(true)),

@@ -2,7 +2,7 @@ use anyhow::{Error, Result};
 
 use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
 use crate::catalog::Catalog;
-use crate::parser::ast::{self, BinaryOperator, Projection, Statement};
+use crate::parser::ast::{self, BinaryOperator, ExprNode, Projection, Statement};
 
 pub mod query;
 
@@ -34,7 +34,11 @@ impl<'a> Analyzer<'a> {
 
     fn analyze_insert(&self, into: ast::Table, select: Statement) -> Result<Query> {
         let (table_id, schema) = match self.analyze_table(into)? {
-            DataSource::Table { table_id, schema } => (table_id, schema),
+            DataSource::Table {
+                table_id,
+                name: _,
+                schema,
+            } => (table_id, schema),
             _ => unreachable!(),
         };
 
@@ -191,13 +195,17 @@ impl<'a> Analyzer<'a> {
 
     fn analyze_table(&self, table: ast::Table) -> Result<DataSource> {
         match table {
-            ast::Table::TableReference { name, alias: _ } => {
+            ast::Table::TableReference { name, alias } => {
                 let table_id = self
                     .catalog
                     .get_table_id(&name)
                     .ok_or_else(|| Error::msg(format!("Could not find table {}", name)))?;
                 let schema = self.catalog.get_schema(&name).unwrap();
-                Ok(DataSource::Table { table_id, schema })
+                Ok(DataSource::Table {
+                    table_id,
+                    name: alias.unwrap_or(name),
+                    schema,
+                })
             }
             ast::Table::EmptyTable => Ok(DataSource::EmptyTable),
         }
@@ -209,26 +217,35 @@ impl<'a> Analyzer<'a> {
         scope: &DataSource,
     ) -> Result<Vec<(Expr, String, TypeId)>> {
         let mut result = vec![];
-        let mut has_wildcard = false;
 
         for projection in projections.into_iter() {
-            if projection == Projection::Wildcard {
-                if !result.is_empty() {
-                    return Err(Error::msg("`SELECT *` cannot have other expressions."));
+            match projection {
+                Projection::Wildcard => {
+                    for col in scope.schema().columns() {
+                        result.push((
+                            Expr::ColumnReference(col.column_offset()),
+                            col.column_name().to_owned(),
+                            col.type_id(),
+                        ))
+                    }
                 }
-                has_wildcard = true;
-                for col in scope.schema().columns() {
-                    result.push((
-                        Expr::ColumnReference(col.column_offset()),
-                        col.column_name().to_owned(),
-                        col.type_id(),
-                    ))
-                }
-            } else {
-                if has_wildcard {
-                    return Err(Error::msg("`SELECT *` cannot have other expressions."));
-                }
-                result.push(self.analyze_projection(projection, scope)?)
+                Projection::QualifiedWildcard { table } => match scope {
+                    DataSource::Table {
+                        table_id: _,
+                        name,
+                        schema,
+                    } if name == &table => {
+                        for col in schema.columns() {
+                            result.push((
+                                Expr::ColumnReference(col.column_offset()),
+                                format!("{}.{}", name, col.column_name().to_owned()),
+                                col.type_id(),
+                            ))
+                        }
+                    }
+                    _ => return Err(Error::msg(format!("Could not find table '{}'", table))),
+                },
+                _ => result.push(self.analyze_projection(projection, scope)?),
             }
         }
 
@@ -250,13 +267,15 @@ impl<'a> Analyzer<'a> {
                 let (expr, type_id) = Self::analyze_expression(expr, scope)?;
                 Ok((expr, alias, type_id))
             }
-            Projection::Wildcard => unreachable!("Should be already handled"),
+            Projection::Wildcard | Projection::QualifiedWildcard { table: _ } => {
+                unreachable!("Should be already handled")
+            }
         }
     }
 
     fn analyze_expression(expr: ast::ExprNode, scope: &DataSource) -> Result<(Expr, TypeId)> {
         match expr {
-            ast::ExprNode::Identifier(name) => {
+            ExprNode::Identifier(name) => {
                 let column = scope
                     .schema()
                     .find_column(&name)
@@ -265,14 +284,30 @@ impl<'a> Analyzer<'a> {
                 let type_id = column.type_id();
                 Ok((Expr::ColumnReference(column_offset), type_id))
             }
-            ast::ExprNode::Number(number) => {
+            ExprNode::QualifiedIdentifier(table, column) => match scope {
+                DataSource::Table {
+                    table_id: _,
+                    name,
+                    schema: _,
+                } if name == &table => {
+                    let column = scope
+                        .schema()
+                        .find_column(&column)
+                        .ok_or_else(|| Error::msg(format!("Could not find column {}", column)))?;
+                    let column_offset = column.column_offset();
+                    let type_id = column.type_id();
+                    Ok((Expr::ColumnReference(column_offset), type_id))
+                }
+                _ => return Err(Error::msg(format!("Could not find table '{}'", table))),
+            },
+            ExprNode::Number(number) => {
                 let num = number.parse::<i32>()?;
                 Ok((Expr::Integer(num), TypeId::Integer))
             }
-            ast::ExprNode::String(s) => Ok((Expr::String(s), TypeId::Text)),
-            ast::ExprNode::Boolean(val) => Ok((Expr::Boolean(val), TypeId::Boolean)),
-            ast::ExprNode::Grouping(expr) => Self::analyze_expression(*expr, scope),
-            ast::ExprNode::Binary { left, op, right } => {
+            ExprNode::String(s) => Ok((Expr::String(s), TypeId::Text)),
+            ExprNode::Boolean(val) => Ok((Expr::Boolean(val), TypeId::Boolean)),
+            ExprNode::Grouping(expr) => Self::analyze_expression(*expr, scope),
+            ExprNode::Binary { left, op, right } => {
                 let (left, left_type) = Self::analyze_expression(*left, scope)?;
                 let (right, right_type) = Self::analyze_expression(*right, scope)?;
                 let result_type = match op {
@@ -326,7 +361,7 @@ impl<'a> Analyzer<'a> {
                     result_type,
                 ))
             }
-            ast::ExprNode::Unary { op, expr } => {
+            ExprNode::Unary { op, expr } => {
                 let (expr, type_id) = Self::analyze_expression(*expr, scope)?;
                 if type_id != TypeId::Integer {
                     Err(Error::msg(format!(
@@ -343,15 +378,15 @@ impl<'a> Analyzer<'a> {
                     ))
                 }
             }
-            ast::ExprNode::IsNull(expr) => {
+            ExprNode::IsNull(expr) => {
                 let (expr, _) = Self::analyze_expression(*expr, scope)?;
                 Ok((Expr::IsNull(Box::new(expr)), TypeId::Boolean))
             }
-            ast::ExprNode::IsNotNull(expr) => {
+            ExprNode::IsNotNull(expr) => {
                 let (expr, _) = Self::analyze_expression(*expr, scope)?;
                 Ok((Expr::IsNotNull(Box::new(expr)), TypeId::Boolean))
             }
-            ast::ExprNode::Null => Ok((Expr::Null, TypeId::Unknown)),
+            ExprNode::Null => Ok((Expr::Null, TypeId::Unknown)),
         }
     }
 }
@@ -393,12 +428,58 @@ mod tests {
 
         let expected_query = Query {
             query_type: QueryType::Select,
-            from: DataSource::Table { table_id, schema },
+            from: DataSource::Table {
+                table_id,
+                name: "accounts".to_owned(),
+                schema,
+            },
             projections: vec![Expr::ColumnReference(0), Expr::ColumnReference(1)],
             filter: None,
             output_schema: Schema::new(vec![
                 ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, false),
                 ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, false),
+            ]),
+            target_schema: None,
+            target: None,
+        };
+
+        assert_eq!(query, expected_query);
+    }
+
+    #[test]
+    fn can_bind_qualified_wildcard_select() {
+        let data_dir = tempdir().unwrap();
+        let file_manager = FileManager::new(data_dir.path()).unwrap();
+        let buffer_manager = BufferManager::new(file_manager, 1);
+
+        let catalog = Catalog::new(&buffer_manager, true).unwrap();
+        let columns = vec![
+            ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
+            ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
+        ];
+        catalog.create_table("accounts", columns).unwrap();
+        let table_id = catalog.get_table_id("accounts").unwrap();
+        let schema = catalog.get_schema("accounts").unwrap();
+
+        let sql = "
+            select acc.* from accounts acc
+        ";
+        let statement = parse_sql(sql).unwrap();
+        let analyzer = Analyzer::new(&catalog);
+        let query = analyzer.analyze(statement).unwrap();
+
+        let expected_query = Query {
+            query_type: QueryType::Select,
+            from: DataSource::Table {
+                table_id,
+                name: "acc".to_owned(),
+                schema,
+            },
+            projections: vec![Expr::ColumnReference(0), Expr::ColumnReference(1)],
+            filter: None,
+            output_schema: Schema::new(vec![
+                ColumnDefinition::new(TypeId::Integer, "acc.id".to_owned(), 0, false),
+                ColumnDefinition::new(TypeId::Text, "acc.name".to_owned(), 1, false),
             ]),
             target_schema: None,
             target: None,
@@ -433,7 +514,11 @@ mod tests {
 
         let expected_query = Query {
             query_type: QueryType::Select,
-            from: DataSource::Table { table_id, schema },
+            from: DataSource::Table {
+                table_id,
+                name: "accounts".to_owned(),
+                schema,
+            },
             projections: vec![
                 Expr::Unary {
                     op: UnaryOperator::Minus,

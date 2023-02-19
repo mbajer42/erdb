@@ -70,6 +70,8 @@ impl Display for BinaryOperator {
 #[derive(Debug, PartialEq)]
 pub enum ExprNode {
     Identifier(String),
+    /// an identifier which includes the table name, e.g. SELECT a.id FROM a
+    QualifiedIdentifier(String, String),
     Number(String),
     String(String),
     Boolean(bool),
@@ -93,6 +95,7 @@ impl Display for ExprNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Identifier(id) => write!(f, "{}", id),
+            Self::QualifiedIdentifier(table, col) => write!(f, "{}.{}", table, col),
             Self::Number(num) => write!(f, "{}", num),
             Self::String(s) => write!(f, "'{}'", s),
             Self::Boolean(b) => write!(f, "{}", b),
@@ -117,6 +120,7 @@ pub enum Projection {
     UnnamedExpr(ExprNode),
     NamedExpr { expr: ExprNode, alias: String },
     Wildcard,
+    QualifiedWildcard { table: String },
 }
 
 #[derive(Debug, PartialEq)]

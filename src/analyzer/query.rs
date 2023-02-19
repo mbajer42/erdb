@@ -69,6 +69,7 @@ impl Expr {
 pub enum DataSource {
     Table {
         table_id: TableId,
+        name: String,
         schema: Schema,
     },
     Values {
@@ -83,6 +84,7 @@ impl DataSource {
         match self {
             DataSource::Table {
                 table_id: _,
+                name: _,
                 schema,
             } => schema,
             DataSource::EmptyTable => &EMPTY_SCHEMA,
