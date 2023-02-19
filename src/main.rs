@@ -11,7 +11,6 @@ mod tuple;
 
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::RwLock;
 use std::thread;
 
 use analyzer::Analyzer;
@@ -64,14 +63,13 @@ fn metacommand() -> Command {
 fn handle_metacommand(
     writer: &mut BufWriter<&TcpStream>,
     command: &str,
-    catalog: &RwLock<Catalog>,
+    catalog: &Catalog,
 ) -> Result<bool> {
     let mut cmd = metacommand();
 
     match cmd.try_get_matches_from_mut(command.split_whitespace()) {
         Ok(matches) => match matches.subcommand() {
             Some((".tables", _matches)) => {
-                let catalog = catalog.read().unwrap();
                 let mut tables = catalog.list_tables();
                 tables.sort();
                 writer.write_all(tables.join("\n").as_bytes())?;
@@ -90,7 +88,6 @@ fn handle_metacommand(
                         return Ok(false);
                     }
                 };
-                let catalog = catalog.read().unwrap();
                 match catalog.get_schema(table) {
                     Some(schema) => {
                         for column in schema.columns() {
@@ -116,19 +113,17 @@ fn handle_sql_statement(
     writer: &mut BufWriter<&TcpStream>,
     sql: &str,
     buffer_manager: &BufferManager,
-    catalog: &RwLock<Catalog>,
+    catalog: &Catalog,
 ) -> Result<()> {
     let statement = parse_sql(sql)?;
     match statement {
         Statement::CreateTable { name, columns } => {
             let columns = columns.into_iter().map(|col| col.into()).collect();
-            let mut catalog = catalog.write().unwrap();
             catalog.create_table(&name, columns)?;
             writer.write_all("Table created".as_bytes())?;
         }
         query => {
-            let catalog = catalog.read().unwrap();
-            let analyzer = Analyzer::new(&catalog);
+            let analyzer = Analyzer::new(catalog);
             let query = analyzer.analyze(query)?;
             let planner = Planner::new();
             let plan = planner.plan_query(query);
@@ -143,7 +138,7 @@ fn handle_sql_statement(
 
 fn handle_client(
     mut stream: TcpStream,
-    catalog: &RwLock<Catalog>,
+    catalog: &Catalog,
     buffer_manager: &BufferManager,
 ) -> Result<()> {
     stream.write_all("Welcome to erdb".as_bytes())?;
@@ -203,10 +198,8 @@ fn main() -> Result<()> {
     let file_manager = FileManager::new(config.data)?;
     let buffer_manager = BufferManager::new(file_manager, config.pool_size);
 
-    let catalog = RwLock::new(
-        Catalog::new(&buffer_manager, config.new)
-            .with_context(|| "Failed to create catalog".to_string())?,
-    );
+    let catalog = Catalog::new(&buffer_manager, config.new)
+        .with_context(|| "Failed to create catalog".to_string())?;
     let listener = TcpListener::bind(("localhost", config.port))?;
 
     thread::scope(|scope| {

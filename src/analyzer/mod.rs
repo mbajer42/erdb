@@ -196,7 +196,7 @@ impl<'a> Analyzer<'a> {
                     .catalog
                     .get_table_id(&name)
                     .ok_or_else(|| Error::msg(format!("Could not find table {}", name)))?;
-                let schema = self.catalog.get_schema(&name).unwrap().clone();
+                let schema = self.catalog.get_schema(&name).unwrap();
                 Ok(DataSource::Table { table_id, schema })
             }
             ast::Table::EmptyTable => Ok(DataSource::EmptyTable),
@@ -375,14 +375,14 @@ mod tests {
         let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
 
-        let mut catalog = Catalog::new(&buffer_manager, true).unwrap();
+        let catalog = Catalog::new(&buffer_manager, true).unwrap();
         let columns = vec![
             ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
             ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
         ];
         catalog.create_table("accounts", columns).unwrap();
         let table_id = catalog.get_table_id("accounts").unwrap();
-        let schema = catalog.get_schema("accounts").unwrap().clone();
+        let schema = catalog.get_schema("accounts").unwrap();
 
         let sql = "
             select * from accounts
@@ -413,7 +413,7 @@ mod tests {
         let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
 
-        let mut catalog = Catalog::new(&buffer_manager, true).unwrap();
+        let catalog = Catalog::new(&buffer_manager, true).unwrap();
         let columns = vec![ColumnDefinition::new(
             TypeId::Integer,
             "id".to_owned(),
@@ -422,7 +422,7 @@ mod tests {
         )];
         catalog.create_table("accounts", columns).unwrap();
         let table_id = catalog.get_table_id("accounts").unwrap();
-        let schema = catalog.get_schema("accounts").unwrap().clone();
+        let schema = catalog.get_schema("accounts").unwrap();
 
         let sql = "
             select -id as negative_id, id+1, 2 * (3+5) from accounts

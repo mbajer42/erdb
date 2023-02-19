@@ -1,6 +1,9 @@
 use std::collections::{hash_map, HashMap};
+use std::sync::atomic::{AtomicU16, Ordering};
 
 use anyhow::{Error, Result};
+use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
 use lazy_static::lazy_static;
 
 use crate::buffer::buffer_manager::BufferManager;
@@ -35,11 +38,11 @@ lazy_static! {
 
 pub struct Catalog<'a> {
     buffer_manager: &'a BufferManager,
-    next_table_id: u16,
+    next_table_id: AtomicU16,
     tables_table: Table<'a>,
     columns_table: Table<'a>,
-    table_name_to_id: HashMap<String, TableId>,
-    table_id_to_schema: HashMap<TableId, Schema>,
+    table_name_to_id: DashMap<String, TableId>,
+    table_id_to_schema: DashMap<TableId, Schema>,
 }
 
 impl<'a> Catalog<'a> {
@@ -58,11 +61,11 @@ impl<'a> Catalog<'a> {
 
         let mut this = Self {
             buffer_manager,
-            next_table_id: USER_DATA_TABLE_ID_START,
+            next_table_id: AtomicU16::new(USER_DATA_TABLE_ID_START),
             tables_table,
             columns_table,
-            table_name_to_id: HashMap::new(),
-            table_id_to_schema: HashMap::new(),
+            table_name_to_id: DashMap::new(),
+            table_id_to_schema: DashMap::new(),
         };
 
         if create_system_tables {
@@ -74,13 +77,15 @@ impl<'a> Catalog<'a> {
     }
 
     pub fn get_table_id(&self, table_name: &str) -> Option<TableId> {
-        self.table_name_to_id.get(table_name).copied()
+        self.table_name_to_id.get(table_name).map(|kv| *kv.value())
     }
 
-    pub fn get_schema(&self, table_name: &str) -> Option<&Schema> {
-        self.table_name_to_id
-            .get(table_name)
-            .and_then(|id| self.table_id_to_schema.get(id))
+    pub fn get_schema(&self, table_name: &str) -> Option<Schema> {
+        self.table_name_to_id.get(table_name).and_then(|id| {
+            self.table_id_to_schema
+                .get(id.value())
+                .map(|schema| schema.value().clone())
+        })
     }
 
     fn create_system_tables(&mut self) -> Result<()> {
@@ -97,16 +102,20 @@ impl<'a> Catalog<'a> {
         Ok(())
     }
 
-    pub fn list_tables(&self) -> Vec<&str> {
-        self.table_name_to_id.keys().map(|s| s.as_str()).collect()
+    pub fn list_tables(&self) -> Vec<String> {
+        self.table_name_to_id
+            .iter()
+            .map(|s| s.key().to_owned())
+            .collect()
     }
 
     fn load_tables(&mut self) -> Result<()> {
+        let mut next_table_id = self.next_table_id.load(Ordering::Relaxed);
         for table in self.tables_table.iter()? {
             let table = table?;
             let name = table.as_str(1).to_owned();
             let id = table.as_i32(0) as u16;
-            self.next_table_id = self.next_table_id.max(id + 1);
+            next_table_id = next_table_id.max(id + 1);
             self.table_name_to_id.insert(name, id);
         }
 
@@ -132,25 +141,27 @@ impl<'a> Catalog<'a> {
         Ok(())
     }
 
-    pub fn create_table(&mut self, table_name: &str, columns: Vec<ColumnDefinition>) -> Result<()> {
-        if self.table_name_to_id.contains_key(table_name) {
-            return Err(Error::msg(format!(
-                "Table with name {} already exists",
-                table_name
-            )));
-        }
-        let table_id = self.generate_table_id()?;
-        self.buffer_manager.create_table(table_id)?;
+    pub fn create_table(&self, table_name: &str, columns: Vec<ColumnDefinition>) -> Result<()> {
+        match self.table_name_to_id.entry(table_name.to_owned()) {
+            Entry::Occupied(_) => {
+                return Err(Error::msg(format!(
+                    "Table with name {} already exists",
+                    table_name
+                )))
+            }
+            Entry::Vacant(vacant) => {
+                let table_id = self.generate_table_id()?;
+                self.buffer_manager.create_table(table_id)?;
 
-        self.persist_table(table_id, table_name)?;
-        self.persist_columns(table_id, &columns)?;
+                self.persist_table(table_id, table_name)?;
+                self.persist_columns(table_id, &columns)?;
 
-        self.table_id_to_schema
-            .insert(table_id, Schema::new(columns));
+                self.table_id_to_schema
+                    .insert(table_id, Schema::new(columns));
 
-        self.table_name_to_id
-            .insert(table_name.to_owned(), table_id);
-
+                vacant.insert(table_id);
+            }
+        };
         Ok(())
     }
 
@@ -169,16 +180,16 @@ impl<'a> Catalog<'a> {
         Ok(())
     }
 
-    fn generate_table_id(&mut self) -> Result<u16> {
-        if self.next_table_id.wrapping_add(1) == 0 {
-            Err(Error::msg(
-                "Cannot create new table. TableId space is already exhausted",
-            ))
-        } else {
-            let id = self.next_table_id;
-            self.next_table_id += 1;
-            Ok(id)
-        }
+    fn generate_table_id(&self) -> Result<u16> {
+        self.next_table_id
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |prev| {
+                if prev == u16::MAX {
+                    None
+                } else {
+                    Some(prev + 1)
+                }
+            })
+            .map_err(|_| Error::msg("Cannot create new table. TableId space is already exhausted"))
     }
 
     fn persist_table(&self, table_id: TableId, table_name: &str) -> Result<()> {
@@ -212,13 +223,13 @@ mod tests {
         let _ = Catalog::new(&buffer_manager, true)?;
         let catalog = Catalog::new(&buffer_manager, false)?;
 
-        let expected_tables_schema: Option<&Schema> = Some(&CATALOG_TABLES_SCHEMA);
+        let expected_tables_schema: Option<Schema> = Some(CATALOG_TABLES_SCHEMA.clone());
         assert_eq!(
             catalog.get_schema(CATALOG_TABLES_NAME),
             expected_tables_schema
         );
 
-        let expected_columns_schema: Option<&Schema> = Some(&CATALOG_COLUMNS_SCHEMA);
+        let expected_columns_schema: Option<Schema> = Some(CATALOG_COLUMNS_SCHEMA.clone());
         assert_eq!(
             catalog.get_schema(CATALOG_COLUMNS_NAME),
             expected_columns_schema
@@ -233,7 +244,7 @@ mod tests {
         let file_manager = FileManager::new(data_dir.path())?;
         let buffer_manager = BufferManager::new(file_manager, 1);
 
-        let mut catalog = Catalog::new(&buffer_manager, true)?;
+        let catalog = Catalog::new(&buffer_manager, true)?;
 
         let expected_columns = vec![
             ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),

@@ -85,7 +85,7 @@ mod tests {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
-        let mut catalog = Catalog::new(&buffer_manager, true).unwrap();
+        let catalog = Catalog::new(&buffer_manager, true).unwrap();
         catalog
             .create_table(
                 "numbers",
