@@ -66,8 +66,8 @@ impl Expr {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Table {
-    Reference {
+pub enum DataSource {
+    Table {
         table_id: TableId,
         schema: Schema,
     },
@@ -78,15 +78,15 @@ pub enum Table {
     EmptyTable,
 }
 
-impl Table {
+impl DataSource {
     pub fn schema(&self) -> &Schema {
         match self {
-            Table::Reference {
+            DataSource::Table {
                 table_id: _,
                 schema,
             } => schema,
-            Table::EmptyTable => &EMPTY_SCHEMA,
-            Table::Values { values: _, schema } => schema,
+            DataSource::EmptyTable => &EMPTY_SCHEMA,
+            DataSource::Values { values: _, schema } => schema,
         }
     }
 }
@@ -95,7 +95,7 @@ impl Table {
 pub struct Query {
     pub query_type: QueryType,
     /// FROM clause
-    pub from: Table,
+    pub from: DataSource,
     /// SELECT list
     pub projections: Vec<Expr>,
     /// WHERE clause

@@ -8,7 +8,7 @@ pub mod query;
 
 use query::Query;
 
-use self::query::{Expr, QueryType, Table};
+use self::query::{DataSource, Expr, QueryType};
 
 pub struct Analyzer<'a> {
     catalog: &'a Catalog<'a>,
@@ -34,7 +34,7 @@ impl<'a> Analyzer<'a> {
 
     fn analyze_insert(&self, into: ast::Table, select: Statement) -> Result<Query> {
         let (table_id, schema) = match self.analyze_table(into)? {
-            Table::Reference { table_id, schema } => (table_id, schema),
+            DataSource::Table { table_id, schema } => (table_id, schema),
             _ => unreachable!(),
         };
 
@@ -131,7 +131,7 @@ impl<'a> Analyzer<'a> {
         for (row, current_values) in values.into_iter().enumerate() {
             let mut current_expressions = vec![];
             for (col, value) in current_values.into_iter().enumerate() {
-                let (expr, type_id) = Self::analyze_expression(value, &Table::EmptyTable)?;
+                let (expr, type_id) = Self::analyze_expression(value, &DataSource::EmptyTable)?;
 
                 if !first_row_added {
                     let column_name = format!("col_{}", col);
@@ -177,7 +177,7 @@ impl<'a> Analyzer<'a> {
 
         Ok(Query {
             query_type: QueryType::Select,
-            from: Table::Values {
+            from: DataSource::Values {
                 values: expressions,
                 schema: Schema::new(output_columns.clone()),
             },
@@ -189,7 +189,7 @@ impl<'a> Analyzer<'a> {
         })
     }
 
-    fn analyze_table(&self, table: ast::Table) -> Result<Table> {
+    fn analyze_table(&self, table: ast::Table) -> Result<DataSource> {
         match table {
             ast::Table::TableReference { name, alias: _ } => {
                 let table_id = self
@@ -197,16 +197,16 @@ impl<'a> Analyzer<'a> {
                     .get_table_id(&name)
                     .ok_or_else(|| Error::msg(format!("Could not find table {}", name)))?;
                 let schema = self.catalog.get_schema(&name).unwrap().clone();
-                Ok(Table::Reference { table_id, schema })
+                Ok(DataSource::Table { table_id, schema })
             }
-            ast::Table::EmptyTable => Ok(Table::EmptyTable),
+            ast::Table::EmptyTable => Ok(DataSource::EmptyTable),
         }
     }
 
     fn analyze_projections(
         &self,
         projections: Vec<ast::Projection>,
-        scope: &Table,
+        scope: &DataSource,
     ) -> Result<Vec<(Expr, String, TypeId)>> {
         let mut result = vec![];
         let mut has_wildcard = false;
@@ -238,7 +238,7 @@ impl<'a> Analyzer<'a> {
     fn analyze_projection(
         &self,
         projection: ast::Projection,
-        scope: &Table,
+        scope: &DataSource,
     ) -> Result<(Expr, String, TypeId)> {
         match projection {
             Projection::UnnamedExpr(expr) => {
@@ -254,7 +254,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn analyze_expression(expr: ast::ExprNode, scope: &Table) -> Result<(Expr, TypeId)> {
+    fn analyze_expression(expr: ast::ExprNode, scope: &DataSource) -> Result<(Expr, TypeId)> {
         match expr {
             ast::ExprNode::Identifier(name) => {
                 let column = scope
@@ -360,7 +360,7 @@ impl<'a> Analyzer<'a> {
 mod tests {
     use tempfile::tempdir;
 
-    use super::query::{Expr, Query, QueryType, Table};
+    use super::query::{DataSource, Expr, Query, QueryType};
     use super::Analyzer;
     use crate::buffer::buffer_manager::BufferManager;
     use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
@@ -393,7 +393,7 @@ mod tests {
 
         let expected_query = Query {
             query_type: QueryType::Select,
-            from: Table::Reference { table_id, schema },
+            from: DataSource::Table { table_id, schema },
             projections: vec![Expr::ColumnReference(0), Expr::ColumnReference(1)],
             filter: None,
             output_schema: Schema::new(vec![
@@ -433,7 +433,7 @@ mod tests {
 
         let expected_query = Query {
             query_type: QueryType::Select,
-            from: Table::Reference { table_id, schema },
+            from: DataSource::Table { table_id, schema },
             projections: vec![
                 Expr::Unary {
                     op: UnaryOperator::Minus,
@@ -490,7 +490,7 @@ mod tests {
 
         let expected_query = Query {
             query_type: QueryType::Select,
-            from: Table::Values {
+            from: DataSource::Values {
                 values: vec![
                     vec![
                         Expr::Integer(1),

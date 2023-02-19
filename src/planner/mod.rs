@@ -1,5 +1,5 @@
 use self::plans::PhysicalPlan;
-use crate::analyzer::query::{Expr, Query, QueryType, Table, EMPTY_SCHEMA};
+use crate::analyzer::query::{DataSource, Expr, Query, QueryType, EMPTY_SCHEMA};
 use crate::catalog::schema::Schema;
 
 pub mod plans;
@@ -48,17 +48,17 @@ impl Planner {
         }
     }
 
-    fn plan_table_reference(&self, table: Table) -> PhysicalPlan {
+    fn plan_table_reference(&self, table: DataSource) -> PhysicalPlan {
         match table {
-            Table::Reference { table_id, schema } => PhysicalPlan::SequentialScan {
+            DataSource::Table { table_id, schema } => PhysicalPlan::SequentialScan {
                 table_id,
                 output_schema: schema,
             },
-            Table::EmptyTable => PhysicalPlan::ValuesPlan {
+            DataSource::EmptyTable => PhysicalPlan::ValuesPlan {
                 values: vec![vec![]],
                 output_schema: EMPTY_SCHEMA.clone(),
             },
-            Table::Values { values, schema } => PhysicalPlan::ValuesPlan {
+            DataSource::Values { values, schema } => PhysicalPlan::ValuesPlan {
                 values,
                 output_schema: schema,
             },
