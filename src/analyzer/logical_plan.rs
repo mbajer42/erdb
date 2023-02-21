@@ -2,7 +2,7 @@ use lazy_static::lazy_static;
 
 use crate::catalog::schema::Schema;
 use crate::common::TableId;
-use crate::parser::ast::{self};
+use crate::parser::ast::{self, JoinType};
 
 lazy_static! {
     pub static ref EMPTY_SCHEMA: Schema = Schema::new(vec![]);
@@ -39,6 +39,7 @@ pub enum TableReference {
     Join {
         left: Box<TableReference>,
         right: Box<TableReference>,
+        join_type: JoinType,
         on: Vec<LogicalExpr>,
     },
     EmptyTable,

@@ -1,6 +1,6 @@
 use crate::catalog::schema::Schema;
 use crate::common::TableId;
-use crate::parser::ast::{BinaryOperator, UnaryOperator};
+use crate::parser::ast::{BinaryOperator, JoinType, UnaryOperator};
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
 
@@ -81,6 +81,7 @@ pub enum PhysicalPlan {
     Join {
         left: Box<PhysicalPlan>,
         right: Box<PhysicalPlan>,
+        join_type: JoinType,
         on: Vec<Expr>,
         output_schema: Schema,
     },
@@ -111,6 +112,7 @@ impl PhysicalPlan {
             Self::Join {
                 left: _,
                 right: _,
+                join_type: _,
                 on: _,
                 output_schema,
             } => output_schema,

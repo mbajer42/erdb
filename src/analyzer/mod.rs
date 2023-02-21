@@ -6,7 +6,7 @@ use crate::analyzer::logical_plan::Query;
 use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
 use crate::catalog::Catalog;
 use crate::parser::ast::{
-    self, BinaryOperator, ExprNode, Projection, SelectStatement, Statement, TableNode,
+    self, BinaryOperator, ExprNode, JoinType, Projection, SelectStatement, Statement, TableNode,
 };
 
 pub mod logical_plan;
@@ -196,6 +196,7 @@ impl<'a> Analyzer<'a> {
             let mut result = TableReference::Join {
                 left: Box::new(left),
                 right: Box::new(right),
+                join_type: JoinType::Inner,
                 on: vec![],
             };
             while let Some(table) = tables.pop_front() {
@@ -204,6 +205,7 @@ impl<'a> Analyzer<'a> {
                 result = TableReference::Join {
                     left: Box::new(result),
                     right: Box::new(table),
+                    join_type: JoinType::Inner,
                     on: vec![],
                 }
             }
@@ -228,12 +230,18 @@ impl<'a> Analyzer<'a> {
                     schema,
                 })
             }
-            TableNode::Join { left, right, on } => {
+            TableNode::Join {
+                left,
+                right,
+                join_type,
+                on,
+            } => {
                 let left = self.analyze_table(*left)?;
                 let right = self.analyze_table(*right)?;
                 let mut result_table = TableReference::Join {
                     left: Box::new(left),
                     right: Box::new(right),
+                    join_type,
                     on: vec![],
                 };
                 let (on_expr, on_type) = Self::analyze_expression(on, &result_table)?;
@@ -249,6 +257,7 @@ impl<'a> Analyzer<'a> {
                     TableReference::Join {
                         left: _,
                         right: _,
+                        join_type: _,
                         on,
                     } => on.push(on_expr),
                     _ => unreachable!(),
@@ -263,6 +272,7 @@ impl<'a> Analyzer<'a> {
                 Ok(TableReference::Join {
                     left: Box::new(left),
                     right: Box::new(right),
+                    join_type: JoinType::Inner,
                     on: vec![],
                 })
             }
@@ -453,7 +463,12 @@ impl<'a> Analyzer<'a> {
                 });
                 Ok(column)
             }
-            TableReference::Join { left, right, on: _ } => {
+            TableReference::Join {
+                left,
+                right,
+                join_type: _,
+                on: _,
+            } => {
                 let left = Self::identify_column(left, table, column)?;
                 let right = Self::identify_column(right, table, column)?;
 
@@ -501,7 +516,12 @@ impl<'a> Analyzer<'a> {
                     })
                     .collect()
             }
-            TableReference::Join { left, right, on: _ } => {
+            TableReference::Join {
+                left,
+                right,
+                join_type: _,
+                on: _,
+            } => {
                 let mut left_columns = Self::get_all_columns(left, table.clone());
                 let mut right_columns = Self::get_all_columns(right, table.clone());
                 left_columns.append(&mut right_columns);

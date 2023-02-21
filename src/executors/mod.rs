@@ -55,6 +55,7 @@ impl<'a> ExecutorFactory<'a> {
             PhysicalPlan::Join {
                 left,
                 right,
+                join_type: _,
                 on: _,
                 output_schema: _,
             } => {
@@ -91,6 +92,7 @@ impl<'a> ExecutorFactory<'a> {
             PhysicalPlan::Join {
                 left,
                 right,
+                join_type,
                 on,
                 output_schema,
             } => {
@@ -100,6 +102,7 @@ impl<'a> ExecutorFactory<'a> {
                 Ok(Box::new(NestedLoopJoinExecutor::new(
                     left_child,
                     right_child,
+                    join_type,
                     on,
                     output_schema,
                 )))

@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use anyhow::{Error, Result};
 
 use self::ast::{
-    BinaryOperator, ColumnDefinition, DataType, ExprNode, Projection, SelectStatement, Statement,
-    TableNode, UnaryOperator,
+    BinaryOperator, ColumnDefinition, DataType, ExprNode, JoinType, Projection, SelectStatement,
+    Statement, TableNode, UnaryOperator,
 };
 use self::token::{tokenize, Keyword, Token};
 
@@ -163,9 +163,10 @@ impl Parser {
         loop {
             let mut table = self.parse_table()?;
             while [
-                Token::Keyword(Keyword::Inner),
                 Token::Keyword(Keyword::Cross),
+                Token::Keyword(Keyword::Inner),
                 Token::Keyword(Keyword::Join),
+                Token::Keyword(Keyword::Left),
             ]
             .contains(self.peek_token())
             {
@@ -203,14 +204,25 @@ impl Parser {
     }
 
     fn parse_join(&mut self, left: TableNode) -> Result<TableNode> {
-        let mut is_cross_join = false;
-        if self.peek_token() == &Token::Keyword(Keyword::Inner) {
-            self.next_token();
-        }
-        if self.peek_token() == &Token::Keyword(Keyword::Cross) {
-            self.next_token();
-            is_cross_join = true;
-        }
+        let (join_type, is_cross_join) = match *self.peek_token() {
+            Token::Keyword(Keyword::Inner) => {
+                self.next_token();
+                (JoinType::Inner, false)
+            }
+            Token::Keyword(Keyword::Join) => (JoinType::Inner, false),
+            Token::Keyword(Keyword::Cross) => {
+                self.next_token();
+                (JoinType::Inner, true)
+            }
+            Token::Keyword(Keyword::Left) => {
+                self.next_token();
+                if self.peek_token() == &Token::Keyword(Keyword::Outer) {
+                    self.next_token();
+                }
+                (JoinType::Left, false)
+            }
+            _ => unreachable!(),
+        };
         self.expect(Token::Keyword(Keyword::Join))?;
 
         let right = self.parse_table()?;
@@ -226,6 +238,7 @@ impl Parser {
             Ok(TableNode::Join {
                 left: Box::new(left),
                 right: Box::new(right),
+                join_type,
                 on,
             })
         }

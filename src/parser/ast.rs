@@ -111,6 +111,12 @@ impl Display for ExprNode {
 }
 
 #[derive(Debug, PartialEq)]
+pub enum JoinType {
+    Inner,
+    Left,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum TableNode {
     TableReference {
         name: String,
@@ -123,6 +129,7 @@ pub enum TableNode {
     Join {
         left: Box<TableNode>,
         right: Box<TableNode>,
+        join_type: JoinType,
         on: ExprNode,
     },
 }

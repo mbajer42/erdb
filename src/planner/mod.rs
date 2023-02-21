@@ -87,7 +87,12 @@ impl Planner {
                     output_schema: schema,
                 }
             }
-            TableReference::Join { left, right, on } => {
+            TableReference::Join {
+                left,
+                right,
+                join_type,
+                on,
+            } => {
                 let left_child = self.plan_table_reference(*left)?;
                 let right_child = self.plan_table_reference(*right)?;
 
@@ -101,6 +106,7 @@ impl Planner {
                 PhysicalPlan::Join {
                     left: Box::new(left_child),
                     right: Box::new(right_child),
+                    join_type,
                     on,
                     output_schema,
                 }
