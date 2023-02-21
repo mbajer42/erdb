@@ -5,7 +5,9 @@ use anyhow::{Error, Result};
 use crate::analyzer::logical_plan::Query;
 use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
 use crate::catalog::Catalog;
-use crate::parser::ast::{self, BinaryOperator, ExprNode, Projection, SelectStatement, Statement};
+use crate::parser::ast::{
+    self, BinaryOperator, ExprNode, Projection, SelectStatement, Statement, TableNode,
+};
 
 pub mod logical_plan;
 
@@ -30,7 +32,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn analyze_insert(&self, into: ast::Table, select: SelectStatement) -> Result<LogicalPlan> {
+    fn analyze_insert(&self, into: ast::TableNode, select: SelectStatement) -> Result<LogicalPlan> {
         let (table_id, schema) = match self.analyze_table(into)? {
             TableReference::BaseTable {
                 table_id,
@@ -184,23 +186,25 @@ impl<'a> Analyzer<'a> {
         })
     }
 
-    fn analyze_tables(&self, mut tables: VecDeque<ast::Table>) -> Result<TableReference> {
+    fn analyze_tables(&self, mut tables: VecDeque<ast::TableNode>) -> Result<TableReference> {
         if tables.is_empty() {
             Ok(TableReference::EmptyTable)
         } else if tables.len() > 1 {
             let left = self.analyze_table(tables.pop_front().unwrap())?;
             let right = self.analyze_table(tables.pop_front().unwrap())?;
 
-            let mut result = TableReference::CrossJoin {
+            let mut result = TableReference::Join {
                 left: Box::new(left),
                 right: Box::new(right),
+                on: vec![],
             };
             while let Some(table) = tables.pop_front() {
                 let table = self.analyze_table(table)?;
 
-                result = TableReference::CrossJoin {
+                result = TableReference::Join {
                     left: Box::new(result),
                     right: Box::new(table),
+                    on: vec![],
                 }
             }
 
@@ -210,9 +214,9 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn analyze_table(&self, table: ast::Table) -> Result<TableReference> {
+    fn analyze_table(&self, table: TableNode) -> Result<TableReference> {
         match table {
-            ast::Table::TableReference { name, alias } => {
+            TableNode::TableReference { name, alias } => {
                 let table_id = self
                     .catalog
                     .get_table_id(&name)
@@ -222,6 +226,44 @@ impl<'a> Analyzer<'a> {
                     table_id,
                     name: alias.unwrap_or(name),
                     schema,
+                })
+            }
+            TableNode::Join { left, right, on } => {
+                let left = self.analyze_table(*left)?;
+                let right = self.analyze_table(*right)?;
+                let mut result_table = TableReference::Join {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    on: vec![],
+                };
+                let (on_expr, on_type) = Self::analyze_expression(on, &result_table)?;
+
+                if on_type != TypeId::Boolean && on_type != TypeId::Unknown {
+                    return Err(Error::msg(format!(
+                        "JOIN conditions must evaluate to boolean but evaluates to: {}",
+                        on_type
+                    )));
+                }
+
+                match &mut result_table {
+                    TableReference::Join {
+                        left: _,
+                        right: _,
+                        on,
+                    } => on.push(on_expr),
+                    _ => unreachable!(),
+                };
+
+                Ok(result_table)
+            }
+            TableNode::CrossJoin { left, right } => {
+                let left = self.analyze_table(*left)?;
+                let right = self.analyze_table(*right)?;
+
+                Ok(TableReference::Join {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    on: vec![],
                 })
             }
         }
@@ -411,7 +453,7 @@ impl<'a> Analyzer<'a> {
                 });
                 Ok(column)
             }
-            TableReference::CrossJoin { left, right } => {
+            TableReference::Join { left, right, on: _ } => {
                 let left = Self::identify_column(left, table, column)?;
                 let right = Self::identify_column(right, table, column)?;
 
@@ -459,7 +501,7 @@ impl<'a> Analyzer<'a> {
                     })
                     .collect()
             }
-            TableReference::CrossJoin { left, right } => {
+            TableReference::Join { left, right, on: _ } => {
                 let mut left_columns = Self::get_all_columns(left, table.clone());
                 let mut right_columns = Self::get_all_columns(right, table.clone());
                 left_columns.append(&mut right_columns);

@@ -36,9 +36,10 @@ pub enum TableReference {
         name: String,
         schema: Schema,
     },
-    CrossJoin {
+    Join {
         left: Box<TableReference>,
         right: Box<TableReference>,
+        on: Vec<LogicalExpr>,
     },
     EmptyTable,
 }

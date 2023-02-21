@@ -111,8 +111,20 @@ impl Display for ExprNode {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Table {
-    TableReference { name: String, alias: Option<String> },
+pub enum TableNode {
+    TableReference {
+        name: String,
+        alias: Option<String>,
+    },
+    CrossJoin {
+        left: Box<TableNode>,
+        right: Box<TableNode>,
+    },
+    Join {
+        left: Box<TableNode>,
+        right: Box<TableNode>,
+        on: ExprNode,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -131,7 +143,7 @@ pub enum Statement {
     },
     Select(SelectStatement),
     Insert {
-        into: Table,
+        into: TableNode,
         select: SelectStatement,
     },
 }
@@ -140,6 +152,6 @@ pub enum Statement {
 pub struct SelectStatement {
     pub values: Option<Vec<Vec<ExprNode>>>,
     pub projections: Vec<Projection>,
-    pub from: VecDeque<Table>,
+    pub from: VecDeque<TableNode>,
     pub filter: Option<ExprNode>,
 }

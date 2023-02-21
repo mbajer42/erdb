@@ -55,6 +55,7 @@ impl<'a> ExecutorFactory<'a> {
             PhysicalPlan::Join {
                 left,
                 right,
+                on: _,
                 output_schema: _,
             } => {
                 self.insert_tables(left);
@@ -90,6 +91,7 @@ impl<'a> ExecutorFactory<'a> {
             PhysicalPlan::Join {
                 left,
                 right,
+                on,
                 output_schema,
             } => {
                 let left_child = self.create_executor_internal(*left)?;
@@ -98,6 +100,7 @@ impl<'a> ExecutorFactory<'a> {
                 Ok(Box::new(NestedLoopJoinExecutor::new(
                     left_child,
                     right_child,
+                    on,
                     output_schema,
                 )))
             }

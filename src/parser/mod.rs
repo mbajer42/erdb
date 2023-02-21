@@ -4,7 +4,7 @@ use anyhow::{Error, Result};
 
 use self::ast::{
     BinaryOperator, ColumnDefinition, DataType, ExprNode, Projection, SelectStatement, Statement,
-    Table, UnaryOperator,
+    TableNode, UnaryOperator,
 };
 use self::token::{tokenize, Keyword, Token};
 
@@ -70,7 +70,7 @@ impl Parser {
         self.expect(Token::Keyword(Keyword::Into))?;
 
         let table_name = self.parse_identifier()?;
-        let table = Table::TableReference {
+        let table = TableNode::TableReference {
             name: table_name,
             alias: None,
         };
@@ -132,7 +132,7 @@ impl Parser {
     fn parse_select_statement(&mut self) -> Result<SelectStatement> {
         let projections = self.parse_projections()?;
 
-        let from = self.parse_tables()?;
+        let from = self.parse_from()?;
         let filter = self.parse_filter()?;
 
         Ok(SelectStatement {
@@ -151,7 +151,7 @@ impl Parser {
         }
     }
 
-    fn parse_tables(&mut self) -> Result<VecDeque<Table>> {
+    fn parse_from(&mut self) -> Result<VecDeque<TableNode>> {
         let mut tables = VecDeque::new();
 
         if self.peek_token() == &Token::Semicolon || self.peek_token() == &Token::End {
@@ -161,20 +161,18 @@ impl Parser {
         self.expect(Token::Keyword(Keyword::From))?;
 
         loop {
-            let table_name = self.parse_identifier()?;
-            let alias = if self.peek_token() == &Token::Keyword(Keyword::As) {
-                self.next_token();
-                Some(self.parse_identifier()?)
-            } else if let Token::Identifier(_s) = self.peek_token() {
-                Some(self.parse_identifier()?)
-            } else {
-                None
-            };
+            let mut table = self.parse_table()?;
+            while [
+                Token::Keyword(Keyword::Inner),
+                Token::Keyword(Keyword::Cross),
+                Token::Keyword(Keyword::Join),
+            ]
+            .contains(self.peek_token())
+            {
+                table = self.parse_join(table)?;
+            }
 
-            tables.push_back(Table::TableReference {
-                name: table_name,
-                alias,
-            });
+            tables.push_back(table);
 
             if self.peek_token() == &Token::Comma {
                 self.next_token();
@@ -185,6 +183,52 @@ impl Parser {
         }
 
         Ok(tables)
+    }
+
+    fn parse_table(&mut self) -> Result<TableNode> {
+        let table_name = self.parse_identifier()?;
+        let alias = if self.peek_token() == &Token::Keyword(Keyword::As) {
+            self.next_token();
+            Some(self.parse_identifier()?)
+        } else if let Token::Identifier(_s) = self.peek_token() {
+            Some(self.parse_identifier()?)
+        } else {
+            None
+        };
+
+        Ok(TableNode::TableReference {
+            name: table_name,
+            alias,
+        })
+    }
+
+    fn parse_join(&mut self, left: TableNode) -> Result<TableNode> {
+        let mut is_cross_join = false;
+        if self.peek_token() == &Token::Keyword(Keyword::Inner) {
+            self.next_token();
+        }
+        if self.peek_token() == &Token::Keyword(Keyword::Cross) {
+            self.next_token();
+            is_cross_join = true;
+        }
+        self.expect(Token::Keyword(Keyword::Join))?;
+
+        let right = self.parse_table()?;
+
+        if is_cross_join {
+            Ok(TableNode::CrossJoin {
+                left: Box::new(left),
+                right: Box::new(right),
+            })
+        } else {
+            self.expect(Token::Keyword(Keyword::On))?;
+            let on = self.parse_expression()?;
+            Ok(TableNode::Join {
+                left: Box::new(left),
+                right: Box::new(right),
+                on,
+            })
+        }
     }
 
     fn parse_projections(&mut self) -> Result<Vec<Projection>> {
@@ -516,7 +560,7 @@ pub fn parse_sql(sql: &str) -> Result<Statement> {
 #[cfg(test)]
 mod tests {
     use super::ast::{
-        BinaryOperator, ColumnDefinition, DataType, ExprNode, Projection, Statement, Table,
+        BinaryOperator, ColumnDefinition, DataType, ExprNode, Projection, Statement, TableNode,
         UnaryOperator,
     };
     use super::parse_sql;
@@ -577,7 +621,7 @@ mod tests {
         let expected_statement = Statement::Select(SelectStatement {
             values: None,
             projections: vec![Projection::Wildcard],
-            from: vec![Table::TableReference {
+            from: vec![TableNode::TableReference {
                 name: "accounts".to_owned(),
                 alias: None,
             }]
@@ -609,7 +653,7 @@ mod tests {
                     alias: "is_active".to_owned(),
                 },
             ],
-            from: vec![Table::TableReference {
+            from: vec![TableNode::TableReference {
                 name: "table1".to_owned(),
                 alias: Some("table_alias".to_owned()),
             }]
@@ -645,7 +689,7 @@ mod tests {
                     }))),
                 }),
             })],
-            from: vec![Table::TableReference {
+            from: vec![TableNode::TableReference {
                 name: "table_1".to_owned(),
                 alias: None,
             }]
@@ -677,7 +721,7 @@ mod tests {
                     op,
                     right: Box::new(ExprNode::Number("42".to_owned())),
                 })],
-                from: vec![Table::TableReference {
+                from: vec![TableNode::TableReference {
                     name: "table_name".to_owned(),
                     alias: None,
                 }]
@@ -757,7 +801,7 @@ mod tests {
 
         let statement = parse_sql(sql).unwrap();
         let expected_statement = Statement::Insert {
-            into: Table::TableReference {
+            into: TableNode::TableReference {
                 name: "table_name".to_owned(),
                 alias: None,
             },
@@ -791,14 +835,14 @@ mod tests {
 
         let statement = parse_sql(sql).unwrap();
         let expected_statement = Statement::Insert {
-            into: Table::TableReference {
+            into: TableNode::TableReference {
                 name: "new_table".to_owned(),
                 alias: None,
             },
             select: SelectStatement {
                 values: None,
                 projections: vec![Projection::Wildcard],
-                from: vec![Table::TableReference {
+                from: vec![TableNode::TableReference {
                     name: "old_table".to_owned(),
                     alias: None,
                 }]

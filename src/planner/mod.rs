@@ -52,7 +52,7 @@ impl Planner {
                 output_schema,
             })
         } else {
-            let mut plan = Self::plan_table_reference(from);
+            let mut plan = self.plan_table_reference(from)?;
             plan = self.plan_filter(filter, plan)?;
             plan = self.plan_projections(projections, output_schema, plan)?;
             Ok(plan)
@@ -74,8 +74,8 @@ impl Planner {
         }
     }
 
-    fn plan_table_reference(table: TableReference) -> PhysicalPlan {
-        match table {
+    fn plan_table_reference(&self, table: TableReference) -> Result<PhysicalPlan> {
+        let plan = match table {
             TableReference::BaseTable {
                 table_id,
                 name,
@@ -87,9 +87,11 @@ impl Planner {
                     output_schema: schema,
                 }
             }
-            TableReference::CrossJoin { left, right } => {
-                let left_child = Self::plan_table_reference(*left);
-                let right_child = Self::plan_table_reference(*right);
+            TableReference::Join { left, right, on } => {
+                let left_child = self.plan_table_reference(*left)?;
+                let right_child = self.plan_table_reference(*right)?;
+
+                let on = self.plan_expressions(on, &[&left_child, &right_child])?;
 
                 let mut left_columns = left_child.schema().columns().to_vec();
                 let mut right_columns = right_child.schema().columns().to_vec();
@@ -99,6 +101,7 @@ impl Planner {
                 PhysicalPlan::Join {
                     left: Box::new(left_child),
                     right: Box::new(right_child),
+                    on,
                     output_schema,
                 }
             }
@@ -106,7 +109,9 @@ impl Planner {
                 values: vec![vec![]],
                 output_schema: EMPTY_SCHEMA.clone(),
             },
-        }
+        };
+
+        Ok(plan)
     }
 
     fn plan_projections(

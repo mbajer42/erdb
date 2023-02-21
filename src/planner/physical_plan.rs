@@ -81,6 +81,7 @@ pub enum PhysicalPlan {
     Join {
         left: Box<PhysicalPlan>,
         right: Box<PhysicalPlan>,
+        on: Vec<Expr>,
         output_schema: Schema,
     },
 }
@@ -110,6 +111,7 @@ impl PhysicalPlan {
             Self::Join {
                 left: _,
                 right: _,
+                on: _,
                 output_schema,
             } => output_schema,
         }

@@ -2,11 +2,14 @@ use anyhow::Result;
 
 use super::Executor;
 use crate::catalog::schema::Schema;
+use crate::planner::physical_plan::Expr;
+use crate::tuple::value::Value;
 use crate::tuple::Tuple;
 
 pub struct NestedLoopJoinExecutor<'a> {
     left_child: Box<dyn Executor + 'a>,
     right_child: Box<dyn Executor + 'a>,
+    on: Vec<Expr>,
     left_tuple: Option<Tuple>,
     schema: Schema,
 }
@@ -15,14 +18,23 @@ impl<'a> NestedLoopJoinExecutor<'a> {
     pub fn new(
         left_child: Box<dyn Executor + 'a>,
         right_child: Box<dyn Executor + 'a>,
+        on: Vec<Expr>,
         schema: Schema,
     ) -> Self {
         Self {
             left_child,
             right_child,
+            on,
             left_tuple: None,
             schema,
         }
+    }
+
+    fn join_condition_evaluates_to_true(&self, tuples: &[&Tuple]) -> bool {
+        self.on.iter().all(|expr| match expr.evaluate(tuples) {
+            Value::Boolean(val) => val,
+            _ => false,
+        })
     }
 
     fn next(&mut self) -> Result<Option<Tuple>> {
@@ -31,15 +43,16 @@ impl<'a> NestedLoopJoinExecutor<'a> {
             self.right_child.rewind()?;
         }
         while let Some(ref left_tuple) = self.left_tuple {
-            let right = self.right_child.next().transpose()?;
-            if let Some(mut right_tuple) = right {
-                let mut left_values = left_tuple.values().to_vec();
-                left_values.append(&mut right_tuple.values);
-                return Ok(Some(Tuple::new(left_values)));
-            } else {
-                self.left_tuple = self.left_child.next().transpose()?;
-                self.right_child.rewind()?;
+            while let Some(mut right_tuple) = self.right_child.next().transpose()? {
+                if self.join_condition_evaluates_to_true(&[left_tuple, &right_tuple]) {
+                    let mut left_values = left_tuple.values().to_vec();
+                    left_values.append(&mut right_tuple.values);
+                    return Ok(Some(Tuple::new(left_values)));
+                }
             }
+
+            self.left_tuple = self.left_child.next().transpose()?;
+            self.right_child.rewind()?;
         }
         Ok(None)
     }
@@ -92,6 +105,33 @@ mod tests {
         tuples
     }
 
+    fn prepare_tables(catalog: &Catalog, buffer_manager: &BufferManager, analyzer: &Analyzer) {
+        catalog
+            .create_table(
+                "numbers",
+                vec![
+                    ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
+                    ColumnDefinition::new(TypeId::Integer, "number".to_owned(), 1, true),
+                ],
+            )
+            .unwrap();
+        catalog
+            .create_table(
+                "strings",
+                vec![
+                    ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
+                    ColumnDefinition::new(TypeId::Text, "string".to_owned(), 1, true),
+                ],
+            )
+            .unwrap();
+
+        let insert_numbers = "insert into numbers values (1, 1), (2, 2), (3, 3)";
+        execute_query(insert_numbers, buffer_manager, analyzer);
+
+        let insert_strings = "insert into strings values (1, 'foo'), (2, 'bar'), (3, 'baz')";
+        execute_query(insert_strings, buffer_manager, analyzer);
+    }
+
     #[test]
     fn can_execute_cross_joins() {
         let data_dir = tempdir().unwrap();
@@ -100,34 +140,7 @@ mod tests {
         let catalog = Catalog::new(&buffer_manager, true).unwrap();
         let analyzer = Analyzer::new(&catalog);
 
-        catalog
-            .create_table(
-                "numbers",
-                vec![ColumnDefinition::new(
-                    TypeId::Integer,
-                    "number".to_owned(),
-                    0,
-                    true,
-                )],
-            )
-            .unwrap();
-        catalog
-            .create_table(
-                "strings",
-                vec![ColumnDefinition::new(
-                    TypeId::Text,
-                    "string".to_owned(),
-                    0,
-                    true,
-                )],
-            )
-            .unwrap();
-
-        let insert_numbers = "insert into numbers values (1), (2), (3)";
-        execute_query(insert_numbers, &buffer_manager, &analyzer);
-
-        let insert_strings = "insert into strings values ('foo'), ('bar'), ('baz')";
-        execute_query(insert_strings, &buffer_manager, &analyzer);
+        prepare_tables(&catalog, &buffer_manager, &analyzer);
 
         let cross_join = "select number, string from numbers, strings";
         let mut result = execute_query(cross_join, &buffer_manager, &analyzer);
@@ -161,34 +174,34 @@ mod tests {
         let catalog = Catalog::new(&buffer_manager, true).unwrap();
         let analyzer = Analyzer::new(&catalog);
 
-        catalog
-            .create_table(
-                "numbers",
-                vec![
-                    ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
-                    ColumnDefinition::new(TypeId::Integer, "number".to_owned(), 1, true),
-                ],
-            )
-            .unwrap();
-        catalog
-            .create_table(
-                "strings",
-                vec![
-                    ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
-                    ColumnDefinition::new(TypeId::Text, "string".to_owned(), 1, true),
-                ],
-            )
-            .unwrap();
-
-        let insert_numbers = "insert into numbers values (1, 1), (2, 2), (3, 3)";
-        execute_query(insert_numbers, &buffer_manager, &analyzer);
-
-        let insert_strings = "insert into strings values (1, 'foo'), (2, 'bar'), (3, 'baz')";
-        execute_query(insert_strings, &buffer_manager, &analyzer);
+        prepare_tables(&catalog, &buffer_manager, &analyzer);
 
         let cross_join =
             "select number, string from numbers, strings where numbers.id = strings.id";
         let mut result = execute_query(cross_join, &buffer_manager, &analyzer);
+        result.sort_by_key(|tuple| (tuple.values()[0].as_i32()));
+
+        let expected_result = vec![
+            Tuple::new(vec![Value::Integer(1), Value::String("foo".to_owned())]),
+            Tuple::new(vec![Value::Integer(2), Value::String("bar".to_owned())]),
+            Tuple::new(vec![Value::Integer(3), Value::String("baz".to_owned())]),
+        ];
+
+        assert_eq!(expected_result, result);
+    }
+
+    #[test]
+    fn can_execute_inner_joins() {
+        let data_dir = tempdir().unwrap();
+        let file_manager = FileManager::new(data_dir.path()).unwrap();
+        let buffer_manager = BufferManager::new(file_manager, 1);
+        let catalog = Catalog::new(&buffer_manager, true).unwrap();
+        let analyzer = Analyzer::new(&catalog);
+
+        prepare_tables(&catalog, &buffer_manager, &analyzer);
+
+        let inner_join = "select number, string from numbers n join strings s on n.id = s.id";
+        let mut result = execute_query(inner_join, &buffer_manager, &analyzer);
         result.sort_by_key(|tuple| (tuple.values()[0].as_i32()));
 
         let expected_result = vec![
