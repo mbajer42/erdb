@@ -25,9 +25,15 @@ impl<'a> NestedLoopJoinExecutor<'a> {
         on: Vec<Expr>,
         schema: Schema,
     ) -> Self {
+        // a right router join is just a left outer join but the left and right tables are swapped
+        // we do this here, but have to remember to correct it later
+        let (left, right) = match join_type {
+            JoinType::Left | JoinType::Inner => (left_child, right_child),
+            JoinType::Right => (right_child, left_child),
+        };
         Self {
-            left_child,
-            right_child,
+            left_child: left,
+            right_child: right,
             join_type,
             on,
             left_tuple: None,
@@ -36,11 +42,33 @@ impl<'a> NestedLoopJoinExecutor<'a> {
         }
     }
 
-    fn join_condition_evaluates_to_true(&self, tuples: &[&Tuple]) -> bool {
-        self.on.iter().all(|expr| match expr.evaluate(tuples) {
+    fn join_condition_evaluates_to_true(&self, left: &Tuple, right: &Tuple) -> bool {
+        let tuples = match self.join_type {
+            JoinType::Left | JoinType::Inner => [left, right],
+            JoinType::Right => [right, left],
+        };
+        self.on.iter().all(|expr| match expr.evaluate(&tuples) {
             Value::Boolean(val) => val,
             _ => false,
         })
+    }
+
+    fn construct_result(
+        &self,
+        mut left: Vec<Value>,
+        mut right: Vec<Value>,
+    ) -> Result<Option<Tuple>> {
+        let values = match self.join_type {
+            JoinType::Inner | JoinType::Left => {
+                left.append(&mut right);
+                left
+            }
+            JoinType::Right => {
+                right.append(&mut left);
+                right
+            }
+        };
+        Ok(Some(Tuple::new(values)))
     }
 
     fn next(&mut self) -> Result<Option<Tuple>> {
@@ -50,23 +78,20 @@ impl<'a> NestedLoopJoinExecutor<'a> {
             self.right_child.rewind()?;
         }
         while let Some(ref left_tuple) = self.left_tuple {
-            while let Some(mut right_tuple) = self.right_child.next().transpose()? {
-                if self.join_condition_evaluates_to_true(&[left_tuple, &right_tuple]) {
+            while let Some(right_tuple) = self.right_child.next().transpose()? {
+                if self.join_condition_evaluates_to_true(left_tuple, &right_tuple) {
                     self.left_had_match = true;
-                    let mut left_values = left_tuple.values().to_vec();
-                    left_values.append(&mut right_tuple.values);
-                    return Ok(Some(Tuple::new(left_values)));
+                    return self.construct_result(left_tuple.values.clone(), right_tuple.values);
                 }
             }
 
-            if !self.left_had_match && self.join_type == JoinType::Left {
-                let mut left_values = left_tuple.values().to_vec();
-                let mut right_null_values = (0..self.right_child.schema().columns().len())
+            if !self.left_had_match && self.join_type.is_outer() {
+                let left_values = left_tuple.values.clone();
+                let right_null_values = (0..self.right_child.schema().columns().len())
                     .map(|_| Value::Null)
                     .collect();
-                left_values.append(&mut right_null_values);
                 self.left_tuple = None;
-                return Ok(Some(Tuple::new(left_values)));
+                return self.construct_result(left_values, right_null_values);
             } else {
                 self.left_had_match = false;
                 self.left_tuple = self.left_child.next().transpose()?;
@@ -254,6 +279,30 @@ mod tests {
             Tuple::new(vec![Value::Integer(2), Value::String("bar".to_owned())]),
             Tuple::new(vec![Value::Integer(3), Value::String("baz".to_owned())]),
             Tuple::new(vec![Value::Integer(4), Value::Null]),
+        ];
+
+        assert_eq!(expected_result, result);
+    }
+
+    #[test]
+    fn can_execute_right_joins() {
+        let data_dir = tempdir().unwrap();
+        let file_manager = FileManager::new(data_dir.path()).unwrap();
+        let buffer_manager = BufferManager::new(file_manager, 1);
+        let catalog = Catalog::new(&buffer_manager, true).unwrap();
+        let analyzer = Analyzer::new(&catalog);
+
+        prepare_tables(&catalog, &buffer_manager, &analyzer);
+
+        let inner_join = "select string, number from strings s right join numbers n on n.id = s.id";
+        let mut result = execute_query(inner_join, &buffer_manager, &analyzer);
+        result.sort_by_key(|tuple| (tuple.values()[1].as_i32()));
+
+        let expected_result = vec![
+            Tuple::new(vec![Value::String("foo".to_owned()), Value::Integer(1)]),
+            Tuple::new(vec![Value::String("bar".to_owned()), Value::Integer(2)]),
+            Tuple::new(vec![Value::String("baz".to_owned()), Value::Integer(3)]),
+            Tuple::new(vec![Value::Null, Value::Integer(4)]),
         ];
 
         assert_eq!(expected_result, result);

@@ -114,6 +114,16 @@ impl Display for ExprNode {
 pub enum JoinType {
     Inner,
     Left,
+    Right,
+}
+
+impl JoinType {
+    pub fn is_outer(&self) -> bool {
+        match self {
+            Self::Inner => false,
+            Self::Left | Self::Right => true,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]

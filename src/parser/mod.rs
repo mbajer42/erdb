@@ -167,6 +167,7 @@ impl Parser {
                 Token::Keyword(Keyword::Inner),
                 Token::Keyword(Keyword::Join),
                 Token::Keyword(Keyword::Left),
+                Token::Keyword(Keyword::Right),
             ]
             .contains(self.peek_token())
             {
@@ -220,6 +221,13 @@ impl Parser {
                     self.next_token();
                 }
                 (JoinType::Left, false)
+            }
+            Token::Keyword(Keyword::Right) => {
+                self.next_token();
+                if self.peek_token() == &Token::Keyword(Keyword::Outer) {
+                    self.next_token();
+                }
+                (JoinType::Right, false)
             }
             _ => unreachable!(),
         };
