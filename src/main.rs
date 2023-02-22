@@ -2,6 +2,7 @@ mod analyzer;
 mod buffer;
 mod catalog;
 mod common;
+mod concurrency;
 mod executors;
 mod parser;
 mod planner;

@@ -8,16 +8,14 @@ use lazy_static::lazy_static;
 
 use crate::buffer::buffer_manager::BufferManager;
 use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
-use crate::common::TableId;
+use crate::common::{
+    TableId, CATALOG_COLUMNS_TABLE_ID, CATALOG_TABLES_TABLE_ID, USER_DATA_TABLE_ID_START,
+};
 use crate::storage::heap::table::Table;
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
 
 pub mod schema;
-
-const USER_DATA_TABLE_ID_START: TableId = 10;
-const CATALOG_TABLES_TABLE_ID: TableId = 1;
-const CATALOG_COLUMNS_TABLE_ID: TableId = 2;
 
 const CATALOG_TABLES_NAME: &str = "system_catalog_tables";
 const CATALOG_COLUMNS_NAME: &str = "system_catalog_columns";
