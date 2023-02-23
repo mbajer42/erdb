@@ -11,6 +11,7 @@ use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
 use crate::common::{
     TableId, CATALOG_COLUMNS_TABLE_ID, CATALOG_TABLES_TABLE_ID, USER_DATA_TABLE_ID_START,
 };
+use crate::concurrency::{Transaction, TransactionId, BOOTSTRAP_TRANSACTION_ID};
 use crate::storage::heap::table::Table;
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
@@ -34,6 +35,7 @@ lazy_static! {
     ]);
 }
 
+// TODO: The catalog defies currently MVCC. Fix it.
 pub struct Catalog<'a> {
     buffer_manager: &'a BufferManager,
     next_table_id: AtomicU16,
@@ -44,7 +46,11 @@ pub struct Catalog<'a> {
 }
 
 impl<'a> Catalog<'a> {
-    pub fn new(buffer_manager: &'a BufferManager, create_system_tables: bool) -> Result<Self> {
+    pub fn new(
+        buffer_manager: &'a BufferManager,
+        bootstrap: bool,
+        bootstrap_transaction: &Transaction,
+    ) -> Result<Self> {
         let tables_table = Table::new(
             CATALOG_TABLES_TABLE_ID,
             buffer_manager,
@@ -57,7 +63,7 @@ impl<'a> Catalog<'a> {
             CATALOG_COLUMNS_SCHEMA.clone(),
         );
 
-        let mut this = Self {
+        let this = Self {
             buffer_manager,
             next_table_id: AtomicU16::new(USER_DATA_TABLE_ID_START),
             tables_table,
@@ -66,10 +72,11 @@ impl<'a> Catalog<'a> {
             table_id_to_schema: DashMap::new(),
         };
 
-        if create_system_tables {
-            this.create_system_tables()?;
+        if bootstrap {
+            this.create_catalog_tables(bootstrap_transaction)?;
+        } else {
+            this.load_tables(bootstrap_transaction)?;
         }
-        this.load_tables()?;
 
         Ok(this)
     }
@@ -86,20 +93,33 @@ impl<'a> Catalog<'a> {
         })
     }
 
-    fn create_system_tables(&mut self) -> Result<()> {
+    fn create_catalog_tables(&self, bootstrap_transaction: &Transaction) -> Result<()> {
         self.buffer_manager.create_table(CATALOG_TABLES_TABLE_ID)?;
         self.buffer_manager.create_table(CATALOG_COLUMNS_TABLE_ID)?;
 
-        self.persist_table(CATALOG_TABLES_TABLE_ID, CATALOG_TABLES_NAME)?;
-        self.persist_table(CATALOG_COLUMNS_TABLE_ID, CATALOG_COLUMNS_NAME)?;
-        self.persist_columns(CATALOG_TABLES_TABLE_ID, CATALOG_TABLES_SCHEMA.columns())?;
-        self.persist_columns(CATALOG_COLUMNS_TABLE_ID, CATALOG_COLUMNS_SCHEMA.columns())?;
-
-        self.buffer_manager.flush_all_buffers()?;
+        self.persist_table(
+            CATALOG_TABLES_TABLE_ID,
+            CATALOG_TABLES_NAME,
+            bootstrap_transaction.tid(),
+        )?;
+        self.persist_table(
+            CATALOG_COLUMNS_TABLE_ID,
+            CATALOG_COLUMNS_NAME,
+            bootstrap_transaction.tid(),
+        )?;
+        self.persist_columns(
+            CATALOG_TABLES_TABLE_ID,
+            CATALOG_TABLES_SCHEMA.columns(),
+            bootstrap_transaction.tid(),
+        )?;
+        self.persist_columns(
+            CATALOG_COLUMNS_TABLE_ID,
+            CATALOG_COLUMNS_SCHEMA.columns(),
+            bootstrap_transaction.tid(),
+        )?;
 
         Ok(())
     }
-
     pub fn list_tables(&self) -> Vec<String> {
         self.table_name_to_id
             .iter()
@@ -107,9 +127,9 @@ impl<'a> Catalog<'a> {
             .collect()
     }
 
-    fn load_tables(&mut self) -> Result<()> {
+    fn load_tables(&self, bootstrap_transaction: &Transaction) -> Result<()> {
         let mut next_table_id = self.next_table_id.load(Ordering::Relaxed);
-        for table in self.tables_table.iter()? {
+        for table in self.tables_table.iter(bootstrap_transaction)? {
             let table = table?;
             let name = table.as_str(1).to_owned();
             let id = table.as_i32(0) as u16;
@@ -118,7 +138,7 @@ impl<'a> Catalog<'a> {
         }
 
         let mut table_id_to_columns: HashMap<TableId, Vec<ColumnDefinition>> = HashMap::new();
-        for column in self.columns_table.iter()? {
+        for column in self.columns_table.iter(bootstrap_transaction)? {
             let column = column?;
             let table_id = column.as_i32(0) as u16;
             let column_definition = column.into();
@@ -151,8 +171,8 @@ impl<'a> Catalog<'a> {
                 let table_id = self.generate_table_id()?;
                 self.buffer_manager.create_table(table_id)?;
 
-                self.persist_table(table_id, table_name)?;
-                self.persist_columns(table_id, &columns)?;
+                self.persist_table(table_id, table_name, BOOTSTRAP_TRANSACTION_ID)?;
+                self.persist_columns(table_id, &columns, BOOTSTRAP_TRANSACTION_ID)?;
 
                 self.table_id_to_schema
                     .insert(table_id, Schema::new(columns));
@@ -163,7 +183,12 @@ impl<'a> Catalog<'a> {
         Ok(())
     }
 
-    fn persist_columns(&self, table_id: TableId, columns: &[ColumnDefinition]) -> Result<()> {
+    fn persist_columns(
+        &self,
+        table_id: TableId,
+        columns: &[ColumnDefinition],
+        insert_transaction_id: TransactionId,
+    ) -> Result<()> {
         for column in columns {
             let values = vec![
                 Value::Integer(table_id as i32),
@@ -173,7 +198,8 @@ impl<'a> Catalog<'a> {
                 Value::Boolean(column.not_null()),
             ];
             let tuple = Tuple::new(values);
-            self.columns_table.insert_tuple(&tuple)?;
+            self.columns_table
+                .insert_tuple(&tuple, insert_transaction_id)?;
         }
         Ok(())
     }
@@ -190,12 +216,18 @@ impl<'a> Catalog<'a> {
             .map_err(|_| Error::msg("Cannot create new table. TableId space is already exhausted"))
     }
 
-    fn persist_table(&self, table_id: TableId, table_name: &str) -> Result<()> {
+    fn persist_table(
+        &self,
+        table_id: TableId,
+        table_name: &str,
+        insert_transaction_id: TransactionId,
+    ) -> Result<()> {
         let table_tuple = Tuple::new(vec![
             Value::Integer(table_id as i32),
             Value::String(table_name.to_owned()),
         ]);
-        self.tables_table.insert_tuple(&table_tuple)?;
+        self.tables_table
+            .insert_tuple(&table_tuple, insert_transaction_id)?;
         Ok(())
     }
 }
@@ -210,16 +242,20 @@ mod tests {
     use crate::buffer::buffer_manager::BufferManager;
     use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::catalog::{CATALOG_COLUMNS_NAME, CATALOG_COLUMNS_SCHEMA, CATALOG_TABLES_NAME};
+    use crate::concurrency::TransactionManager;
     use crate::storage::file_manager::FileManager;
 
     #[test]
     fn can_create_system_tables() -> Result<()> {
         let data_dir = tempdir()?;
         let file_manager = FileManager::new(data_dir.path())?;
-        let buffer_manager = BufferManager::new(file_manager, 1);
+        let buffer_manager = BufferManager::new(file_manager, 2);
+        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let bootstrap_transaction = transaction_manager.bootstrap();
 
-        let _ = Catalog::new(&buffer_manager, true)?;
-        let catalog = Catalog::new(&buffer_manager, false)?;
+        let _ = Catalog::new(&buffer_manager, true, &bootstrap_transaction)?;
+        bootstrap_transaction.commit()?;
+        let catalog = Catalog::new(&buffer_manager, false, &bootstrap_transaction)?;
 
         let expected_tables_schema: Option<Schema> = Some(CATALOG_TABLES_SCHEMA.clone());
         assert_eq!(
@@ -240,9 +276,11 @@ mod tests {
     fn can_create_user_table() -> Result<()> {
         let data_dir = tempdir()?;
         let file_manager = FileManager::new(data_dir.path())?;
-        let buffer_manager = BufferManager::new(file_manager, 1);
-
-        let catalog = Catalog::new(&buffer_manager, true)?;
+        let buffer_manager = BufferManager::new(file_manager, 2);
+        let transaction_manager = TransactionManager::new(&buffer_manager, true)?;
+        let bootstrap_transaction = transaction_manager.bootstrap();
+        let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction)?;
+        bootstrap_transaction.commit().unwrap();
 
         let expected_columns = vec![
             ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),

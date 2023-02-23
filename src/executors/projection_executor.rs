@@ -2,6 +2,7 @@ use anyhow::Result;
 
 use super::Executor;
 use crate::catalog::schema::Schema;
+
 use crate::planner::physical_plan::Expr;
 use crate::tuple::Tuple;
 
@@ -50,45 +51,36 @@ impl<'a> Executor for ProjectionExecutor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use tempfile::tempdir;
+    
 
-    use crate::analyzer::Analyzer;
-    use crate::buffer::buffer_manager::BufferManager;
-    use crate::catalog::Catalog;
-    use crate::executors::ExecutorFactory;
+    
+    
+    
+    
+    use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
+    
     use crate::parser::ast::BinaryOperator;
-    use crate::parser::parse_sql;
-    use crate::planner::Planner;
-    use crate::storage::file_manager::FileManager;
+    
+    
+    
     use crate::tuple::value::Value;
 
     fn execute_query_expect_single_tuple(
-        buffer_manager: &BufferManager,
         sql: &str,
-        analyzer: &Analyzer,
+        execution_test_context: &ExecutionTestContext,
         expected: Value,
     ) {
-        let query = parse_sql(sql).unwrap();
-        let query = analyzer.analyze(query).unwrap();
-        let planner = Planner::new();
-        let plan = planner.prepare_logical_plan(query).unwrap();
-        let mut executor_factory = ExecutorFactory::new(buffer_manager);
-        let mut executor = executor_factory.create_executor(plan).unwrap();
-        let result = executor.next().transpose().unwrap();
-        let tuple = result.unwrap();
-        let values = tuple.values();
+        let tuples = execution_test_context.execute_query(sql).unwrap();
+        assert_eq!(tuples.len(), 1);
+        let values = tuples.get(0).unwrap().values();
         assert_eq!(values.len(), 1);
         assert_eq!(values[0], expected, "when evaluating {}", sql);
-        assert!(executor.next().is_none());
     }
 
     #[test]
     fn can_execute_comparison_expressions() {
-        let data_dir = tempdir().unwrap();
-        let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = BufferManager::new(file_manager, 1);
-        let catalog = Catalog::new(&buffer_manager, true).unwrap();
-        let analyzer = Analyzer::new(&catalog);
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
 
         let arg_op_expected_result = [
             (Value::Integer(42), BinaryOperator::Eq, Value::Boolean(true)),
@@ -127,17 +119,14 @@ mod tests {
 
         for (arg, op, expected) in arg_op_expected_result {
             let sql = format!("select {} {} 42", arg, op);
-            execute_query_expect_single_tuple(&buffer_manager, &sql, &analyzer, expected);
+            execute_query_expect_single_tuple(&sql, &execution_test_context, expected);
         }
     }
 
     #[test]
     fn can_execute_arithmetic_expressions() {
-        let data_dir = tempdir().unwrap();
-        let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = BufferManager::new(file_manager, 1);
-        let catalog = Catalog::new(&buffer_manager, true).unwrap();
-        let analyzer = Analyzer::new(&catalog);
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
 
         let left_op_right_result = vec![
             (
@@ -180,18 +169,14 @@ mod tests {
 
         for (left, op, right, expected) in left_op_right_result {
             let sql = format!("select {} {} {}", left, op, right);
-            execute_query_expect_single_tuple(&buffer_manager, &sql, &analyzer, expected);
+            execute_query_expect_single_tuple(&sql, &execution_test_context, expected);
         }
     }
 
     #[test]
     fn can_execute_or_and_expressions() {
-        let data_dir = tempdir().unwrap();
-        let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = BufferManager::new(file_manager, 1);
-        let catalog = Catalog::new(&buffer_manager, true).unwrap();
-        let analyzer = Analyzer::new(&catalog);
-
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
         let left_op_right_result = vec![
             (
                 Value::Boolean(true),
@@ -227,7 +212,7 @@ mod tests {
 
         for (left, op, right, expected) in left_op_right_result {
             let sql = format!("select {} {} {}", left, op, right);
-            execute_query_expect_single_tuple(&buffer_manager, &sql, &analyzer, expected);
+            execute_query_expect_single_tuple(&sql, &execution_test_context, expected);
         }
     }
 }

@@ -26,6 +26,8 @@ use planner::Planner;
 use printer::Printer;
 use storage::file_manager::FileManager;
 
+use crate::concurrency::TransactionManager;
+
 #[derive(Parser)]
 struct ServerConfig {
     #[arg(long, help = "Directory where data is stored")]
@@ -114,6 +116,7 @@ fn handle_sql_statement(
     writer: &mut BufWriter<&TcpStream>,
     sql: &str,
     buffer_manager: &BufferManager,
+    transaction_manager: &TransactionManager,
     catalog: &Catalog,
 ) -> Result<()> {
     let statement = parse_sql(sql)?;
@@ -128,7 +131,8 @@ fn handle_sql_statement(
             let query = analyzer.analyze(query)?;
             let planner = Planner::new();
             let plan = planner.prepare_logical_plan(query)?;
-            let mut executor_factory = ExecutorFactory::new(buffer_manager);
+            let transaction = transaction_manager.start_transaction()?;
+            let mut executor_factory = ExecutorFactory::new(buffer_manager, &transaction);
             let executor = executor_factory.create_executor(plan)?;
             let mut printer = Printer::new(executor);
             printer.print_all_tuples(writer)?;
@@ -141,6 +145,7 @@ fn handle_client(
     mut stream: TcpStream,
     catalog: &Catalog,
     buffer_manager: &BufferManager,
+    transaction_manager: &TransactionManager,
 ) -> Result<()> {
     stream.write_all("Welcome to erdb".as_bytes())?;
     stream.write_all("\n> ".as_bytes())?;
@@ -171,7 +176,13 @@ fn handle_client(
 
             // execute a statement when it ends with a semicolon
             if statement.trim_end().ends_with(';') {
-                match handle_sql_statement(&mut writer, &statement, buffer_manager, catalog) {
+                match handle_sql_statement(
+                    &mut writer,
+                    &statement,
+                    buffer_manager,
+                    transaction_manager,
+                    catalog,
+                ) {
                     Ok(()) => (),
                     Err(e) => {
                         writer.write_all(format!("Error: {}", e).as_bytes())?;
@@ -198,13 +209,24 @@ fn main() -> Result<()> {
 
     let file_manager = FileManager::new(config.data)?;
     let buffer_manager = BufferManager::new(file_manager, config.pool_size);
+    let transaction_manager = TransactionManager::new(&buffer_manager, config.new)
+        .with_context(|| "Failed to create transaction manager")?;
+    let bootstrap_transaction = transaction_manager.bootstrap();
 
-    let catalog = Catalog::new(&buffer_manager, config.new)
-        .with_context(|| "Failed to create catalog".to_string())?;
+    let catalog = Catalog::new(&buffer_manager, config.new, &bootstrap_transaction)
+        .with_context(|| "Failed to create catalog")?;
+
+    if config.new {
+        bootstrap_transaction
+            .commit()
+            .with_context(|| "Failed to commit bootstrap transaction")?;
+    }
+
     let listener = TcpListener::bind(("localhost", config.port))?;
 
     thread::scope(|scope| {
         let buffer_manager = &buffer_manager;
+        let transaction_manager = &transaction_manager;
         let catalog = &catalog;
 
         scope.spawn(|| {
@@ -228,12 +250,12 @@ fn main() -> Result<()> {
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
-                    scope.spawn(
-                        move || match handle_client(stream, catalog, buffer_manager) {
+                    scope.spawn(move || {
+                        match handle_client(stream, catalog, buffer_manager, transaction_manager) {
                             Ok(()) => (),
                             Err(e) => println!("Failed to handle client. Cause: {e}"),
-                        },
-                    );
+                        }
+                    });
                 }
                 Err(e) => println!("Could not get tcp stream: {e}"),
             }

@@ -1,18 +1,27 @@
-use std::marker::PhantomData;
 
+
+
+use crate::common::MAX_COLUMNS;
+use crate::concurrency::TransactionId;
+use crate::storage::common::{Deserializer, Serializer};
+use crate::tuple::value::Value;
 use crate::tuple::Tuple;
 
-pub(in crate::storage::heap) struct HeapTupleHeader<'a> {
+const MAX_NULL_BITS_SIZE: usize = (MAX_COLUMNS / 8) as usize;
+
+pub struct HeapTupleHeader {
+    /// the id of the transaction which inserted this tuple
+    insert_tid: TransactionId,
+    /// the id of the transaction which deleted/updated this tuple.
+    /// Set to 0 if it has not been deleted/updated
+    delete_tid: TransactionId,
     flags: u8,
     user_data_start: u8,
-    null_bits: *const u8,
-    // below fields are helper data and won't be serialized
-    // size of the slice that null_bits points to
-    null_bits_size: u8,
-    // if null_bits points to a mutable slice
-    mutable: bool,
-    // null bits should only live as long as null_bits pointer is valid
-    phantom: PhantomData<&'a [u8]>,
+    /// a bitmap, where a bit is set if the value is NULL
+    /// is only present if the tuple has any NULL values
+    null_bitmap: [u8; MAX_NULL_BITS_SIZE],
+    // below fields are not serialized
+    column_count: u8,
 }
 
 const HAS_NULL_FLAG: u8 = 0x01;
@@ -21,69 +30,88 @@ fn has_null(flags: u8) -> bool {
     (flags & HAS_NULL_FLAG) != 0
 }
 
-impl<'a> HeapTupleHeader<'a> {
+/// Returns the size in bytes of the null bitmap
+fn null_bitmap_size(column_count: u8) -> u8 {
+    (column_count - 1) / 8 + 1
+}
+
+impl HeapTupleHeader {
     // Required bytes when serialized, regardless of tuple
     // i.e. without the null_bits bitmap
-    // Currently, the size is 2, one byte for the flags and one byte for user_data_start
-    const CONSTANT_SIZE: usize = 2;
-
-    fn null_bits_size(column_count: u8) -> u8 {
-        (column_count - 1) / 8 + 1
-    }
+    // Currently, it consists of:
+    // 1. insert_tid (4 bytes)
+    // 2. delete_tid (4 bytes)
+    // 3. flags (1 byte)
+    // 4. user_data_start (1 byte)
+    const CONSTANT_SIZE: usize = 10;
 
     pub fn from_bytes(bytes: &[u8], column_count: u8) -> Self {
-        let flags = bytes[0];
-        let user_data_start = bytes[1];
-        let null_bits = if has_null(flags) {
-            bytes[Self::CONSTANT_SIZE..].as_ptr()
-        } else {
-            std::ptr::null()
-        };
+        let mut deserializer = Deserializer::new(bytes);
+
+        let insert_tid = deserializer.deserialize_u32();
+        let delete_tid = deserializer.deserialize_u32();
+        let flags = deserializer.deserialize_u8();
+        let user_data_start = deserializer.deserialize_u8();
+
+        let mut null_bitmap = [0u8; MAX_NULL_BITS_SIZE];
+        if has_null(flags) {
+            deserializer.copy_bytes(&mut null_bitmap, null_bitmap_size(column_count) as usize);
+        }
 
         Self {
+            insert_tid,
+            delete_tid,
             flags,
             user_data_start,
-            null_bits,
-            null_bits_size: Self::null_bits_size(column_count),
-            mutable: false,
-            phantom: PhantomData,
+            null_bitmap,
+            column_count,
         }
     }
 
-    pub fn from_tuple(tuple: &Tuple, buffer: &mut [u8]) -> Self {
-        let flags = if tuple.has_null() { HAS_NULL_FLAG } else { 0 };
-        let user_data_start = if tuple.has_null() {
-            Self::CONSTANT_SIZE as u8 + Self::null_bits_size(tuple.values().len() as u8)
+    pub fn new_tuple(tuple: &Tuple, insert_tid: TransactionId) -> Self {
+        let mut flags = 0;
+        let mut null_bitmap = [0u8; MAX_NULL_BITS_SIZE];
+        for (column, value) in tuple.values().iter().enumerate() {
+            if value == &Value::Null {
+                flags |= HAS_NULL_FLAG;
+                null_bitmap[column / 8] |= 1 << (column % 8);
+            }
+        }
+        let user_data_start = if has_null(flags) {
+            Self::CONSTANT_SIZE as u8 + null_bitmap_size(tuple.values().len() as u8)
         } else {
             Self::CONSTANT_SIZE as u8
         };
 
-        let null_bits_size = if tuple.has_null() {
-            Self::null_bits_size(tuple.values().len() as u8)
-        } else {
-            0
-        };
-
-        let null_bits = if tuple.has_null() {
-            buffer[Self::CONSTANT_SIZE..].as_ptr()
-        } else {
-            std::ptr::null()
-        };
-
         Self {
+            insert_tid,
+            delete_tid: 0,
             flags,
             user_data_start,
-            null_bits,
-            null_bits_size,
-            mutable: true,
-            phantom: PhantomData,
+            null_bitmap,
+            column_count: tuple.values().len() as u8,
         }
+    }
+
+    pub fn insert_tid(&self) -> TransactionId {
+        self.insert_tid
+    }
+
+    pub fn delete_tid(&self) -> TransactionId {
+        self.delete_tid
     }
 
     /// Serializes the header to a buffer
     pub fn serialize(&self, buffer: &mut [u8]) {
-        buffer[0] = self.flags;
-        buffer[1] = self.user_data_start;
+        let mut serializer = Serializer::new(buffer);
+        serializer.serialize_u32(self.insert_tid);
+        serializer.serialize_u32(self.delete_tid);
+        serializer.serialize_u8(self.flags);
+        serializer.serialize_u8(self.user_data_start);
+
+        if self.has_null() {
+            serializer.copy_bytes(&self.null_bitmap[..null_bitmap_size(self.column_count) as usize])
+        }
     }
 
     pub fn user_data_start(&self) -> usize {
@@ -97,32 +125,15 @@ impl<'a> HeapTupleHeader<'a> {
 
     /// Returns whether the n_th column of the tuple is null
     pub fn is_null(&self, column: u8) -> bool {
-        let null_bits =
-            unsafe { std::slice::from_raw_parts(self.null_bits, self.null_bits_size as usize) };
-        let byte = null_bits[(column / 8) as usize];
+        let byte = self.null_bitmap[(column / 8) as usize];
         let mask = 1 << (column % 8);
         (byte & mask) != 0
-    }
-
-    /// Marks the n_th column of the tuple as null
-    pub fn mark_null(&mut self, column: u8) {
-        if !self.mutable {
-            return;
-        }
-        self.flags |= HAS_NULL_FLAG;
-        let null_bits = unsafe {
-            // SAFETY CHECK:
-            // The phantom field in our struct ensures that the self.null_bits pointer is valid
-            // self.mutable ensures that we actually point to a mutable slice
-            std::slice::from_raw_parts_mut(self.null_bits as *mut u8, self.null_bits_size as usize)
-        };
-        null_bits[(column / 8) as usize] |= 1 << (column % 8);
     }
 
     /// Calculates how many bytes a header of a tuple would occupy when serialized
     pub fn required_free_space(tuple: &Tuple) -> usize {
         if tuple.has_null() {
-            Self::CONSTANT_SIZE + Self::null_bits_size(tuple.values().len() as u8) as usize
+            Self::CONSTANT_SIZE + null_bitmap_size(tuple.values().len() as u8) as usize
         } else {
             Self::CONSTANT_SIZE
         }

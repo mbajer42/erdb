@@ -2,6 +2,7 @@ use anyhow::Result;
 
 use super::Executor;
 use crate::catalog::schema::Schema;
+
 use crate::parser::ast::JoinType;
 use crate::planner::physical_plan::Expr;
 use crate::tuple::value::Value;
@@ -120,37 +121,22 @@ impl<'a> Executor for NestedLoopJoinExecutor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use tempfile::tempdir;
+    
 
-    use crate::analyzer::Analyzer;
-    use crate::buffer::buffer_manager::BufferManager;
+    
+    
     use crate::catalog::schema::{ColumnDefinition, TypeId};
-    use crate::catalog::Catalog;
-    use crate::executors::ExecutorFactory;
-    use crate::parser::parse_sql;
-    use crate::planner::Planner;
-    use crate::storage::file_manager::FileManager;
+    
+    use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
+    
+    
+    
+    
     use crate::tuple::value::Value;
     use crate::tuple::Tuple;
 
-    fn execute_query(sql: &str, buffer_manager: &BufferManager, analyzer: &Analyzer) -> Vec<Tuple> {
-        let query = parse_sql(sql).unwrap();
-        let query = analyzer.analyze(query).unwrap();
-        let planner = Planner::new();
-        let plan = planner.prepare_logical_plan(query).unwrap();
-        let mut executor_factory = ExecutorFactory::new(buffer_manager);
-        let mut executor = executor_factory.create_executor(plan).unwrap();
-
-        let mut tuples = vec![];
-        while let Some(tuple) = executor.next() {
-            tuples.push(tuple.unwrap());
-        }
-
-        tuples
-    }
-
-    fn prepare_tables(catalog: &Catalog, buffer_manager: &BufferManager, analyzer: &Analyzer) {
-        catalog
+    fn prepare_tables(execution_test_context: &ExecutionTestContext) {
+        execution_test_context
             .create_table(
                 "numbers",
                 vec![
@@ -159,7 +145,8 @@ mod tests {
                 ],
             )
             .unwrap();
-        catalog
+
+        execution_test_context
             .create_table(
                 "strings",
                 vec![
@@ -170,24 +157,20 @@ mod tests {
             .unwrap();
 
         let insert_numbers = "insert into numbers values (1, 1), (2, 2), (3, 3), (4, 4)";
-        execute_query(insert_numbers, buffer_manager, analyzer);
+        execution_test_context.execute_query(insert_numbers).unwrap();
 
         let insert_strings = "insert into strings values (1, 'foo'), (2, 'bar'), (3, 'baz')";
-        execute_query(insert_strings, buffer_manager, analyzer);
+        execution_test_context.execute_query(insert_strings).unwrap();
     }
 
     #[test]
     fn can_execute_cross_joins() {
-        let data_dir = tempdir().unwrap();
-        let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = BufferManager::new(file_manager, 1);
-        let catalog = Catalog::new(&buffer_manager, true).unwrap();
-        let analyzer = Analyzer::new(&catalog);
-
-        prepare_tables(&catalog, &buffer_manager, &analyzer);
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        prepare_tables(&execution_test_context);
 
         let cross_join = "select number, string from numbers, strings";
-        let mut result = execute_query(cross_join, &buffer_manager, &analyzer);
+        let mut result = execution_test_context.execute_query(cross_join).unwrap();
         result.sort_by_key(|tuple| {
             (
                 tuple.values()[0].as_i32(),
@@ -215,17 +198,13 @@ mod tests {
 
     #[test]
     fn conditions_on_cross_joins() {
-        let data_dir = tempdir().unwrap();
-        let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = BufferManager::new(file_manager, 1);
-        let catalog = Catalog::new(&buffer_manager, true).unwrap();
-        let analyzer = Analyzer::new(&catalog);
-
-        prepare_tables(&catalog, &buffer_manager, &analyzer);
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        prepare_tables(&execution_test_context);
 
         let cross_join =
             "select number, string from numbers, strings where numbers.id = strings.id";
-        let mut result = execute_query(cross_join, &buffer_manager, &analyzer);
+        let mut result = execution_test_context.execute_query(cross_join).unwrap();
         result.sort_by_key(|tuple| (tuple.values()[0].as_i32()));
 
         let expected_result = vec![
@@ -239,16 +218,12 @@ mod tests {
 
     #[test]
     fn can_execute_inner_joins() {
-        let data_dir = tempdir().unwrap();
-        let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = BufferManager::new(file_manager, 1);
-        let catalog = Catalog::new(&buffer_manager, true).unwrap();
-        let analyzer = Analyzer::new(&catalog);
-
-        prepare_tables(&catalog, &buffer_manager, &analyzer);
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        prepare_tables(&execution_test_context);
 
         let inner_join = "select number, string from numbers n join strings s on n.id = s.id";
-        let mut result = execute_query(inner_join, &buffer_manager, &analyzer);
+        let mut result = execution_test_context.execute_query(inner_join).unwrap();
         result.sort_by_key(|tuple| (tuple.values()[0].as_i32()));
 
         let expected_result = vec![
@@ -262,16 +237,12 @@ mod tests {
 
     #[test]
     fn can_execute_left_joins() {
-        let data_dir = tempdir().unwrap();
-        let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = BufferManager::new(file_manager, 1);
-        let catalog = Catalog::new(&buffer_manager, true).unwrap();
-        let analyzer = Analyzer::new(&catalog);
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        prepare_tables(&execution_test_context);
 
-        prepare_tables(&catalog, &buffer_manager, &analyzer);
-
-        let inner_join = "select number, string from numbers n left join strings s on n.id = s.id";
-        let mut result = execute_query(inner_join, &buffer_manager, &analyzer);
+        let left_join = "select number, string from numbers n left join strings s on n.id = s.id";
+        let mut result = execution_test_context.execute_query(left_join).unwrap();
         result.sort_by_key(|tuple| (tuple.values()[0].as_i32()));
 
         let expected_result = vec![
@@ -286,16 +257,12 @@ mod tests {
 
     #[test]
     fn can_execute_right_joins() {
-        let data_dir = tempdir().unwrap();
-        let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = BufferManager::new(file_manager, 1);
-        let catalog = Catalog::new(&buffer_manager, true).unwrap();
-        let analyzer = Analyzer::new(&catalog);
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        prepare_tables(&execution_test_context);
 
-        prepare_tables(&catalog, &buffer_manager, &analyzer);
-
-        let inner_join = "select string, number from strings s right join numbers n on n.id = s.id";
-        let mut result = execute_query(inner_join, &buffer_manager, &analyzer);
+        let right_join = "select string, number from strings s right join numbers n on n.id = s.id";
+        let mut result = execution_test_context.execute_query(right_join).unwrap();
         result.sort_by_key(|tuple| (tuple.values()[1].as_i32()));
 
         let expected_result = vec![

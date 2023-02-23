@@ -3,11 +3,15 @@ use std::ops::DerefMut;
 use anyhow::{Error, Result};
 use lazy_static::lazy_static;
 
-use super::tuple::{parse_heap_tuple, required_free_space, serialize_heap_tuple, MAX_TUPLE_SIZE};
+use super::tuple::{
+    parse_heap_tuple, parse_heap_tuple_header, required_free_space, serialize_heap_tuple,
+    MAX_TUPLE_SIZE,
+};
 use crate::buffer::buffer_manager::{BufferGuard, BufferManager};
 use crate::catalog::schema::Schema;
 use crate::common::{PageNo, TableId, INVALID_PAGE_NO, PAGE_SIZE};
-use crate::storage::common::{PageHeader, Serialize, TUPLE_SLOT_SIZE};
+use crate::concurrency::{Transaction, TransactionId};
+use crate::storage::common::{PageHeader, TUPLE_SLOT_SIZE};
 use crate::tuple::Tuple;
 
 lazy_static! {
@@ -24,15 +28,17 @@ pub struct HeapTupleIterator<'a> {
     max_page_no: PageNo,
     curr_slot: u8,
     table: &'a Table<'a>,
+    transaction: &'a Transaction<'a>,
 }
 
 impl<'a> HeapTupleIterator<'a> {
-    fn new(max_page_no: PageNo, table: &'a Table<'a>) -> Self {
+    fn new(max_page_no: PageNo, table: &'a Table<'a>, transaction: &'a Transaction<'a>) -> Self {
         Self {
             curr_page_no: 1,
             max_page_no,
             curr_slot: 0,
             table,
+            transaction,
         }
     }
 
@@ -50,10 +56,18 @@ impl<'a> HeapTupleIterator<'a> {
                 self.curr_slot = 0;
             } else {
                 let (offset, _size) = PageHeader::tuple_slot(&data, self.curr_slot);
-                let tuple = parse_heap_tuple(&(&data)[offset as usize..], &self.table.schema);
                 self.curr_slot += 1;
 
-                return Ok(Some(tuple));
+                let tuple_data = &(&data)[offset as usize..];
+                let header = parse_heap_tuple_header(tuple_data, &self.table.schema);
+                if self
+                    .transaction
+                    .is_tuple_visible(header.insert_tid(), header.delete_tid())?
+                {
+                    let tuple =
+                        parse_heap_tuple(&(&data)[offset as usize..], &header, &self.table.schema);
+                    return Ok(Some(tuple));
+                }
             }
         }
     }
@@ -67,13 +81,18 @@ impl<'a> std::iter::Iterator for HeapTupleIterator<'a> {
     }
 }
 
-fn insert_tuple(buffer: &mut [u8], tuple_size: u16, tuple: &Tuple) -> bool {
+fn insert_tuple(
+    buffer: &mut [u8],
+    tuple_size: u16,
+    tuple: &Tuple,
+    insert_tid: TransactionId,
+) -> bool {
     let mut header = PageHeader::parse(buffer);
     if header.free_space() < tuple_size + TUPLE_SLOT_SIZE {
         return false;
     }
     let tuple_start = header.add_tuple_slot(buffer, tuple_size);
-    serialize_heap_tuple(&mut buffer[tuple_start as usize..], tuple);
+    serialize_heap_tuple(&mut buffer[tuple_start as usize..], tuple, insert_tid);
     header.serialize(buffer);
 
     true
@@ -121,7 +140,7 @@ impl<'a> Table<'a> {
         }
     }
 
-    pub fn insert_tuple(&self, tuple: &Tuple) -> Result<()> {
+    pub fn insert_tuple(&self, tuple: &Tuple, insert_tid: TransactionId) -> Result<()> {
         let required_size = required_free_space(tuple);
         if required_size >= MAX_TUPLE_SIZE {
             return Err(Error::msg(format!(
@@ -138,7 +157,7 @@ impl<'a> Table<'a> {
 
         loop {
             let mut data = buffer.write();
-            if insert_tuple(data.deref_mut(), required_size, tuple) {
+            if insert_tuple(data.deref_mut(), required_size, tuple, insert_tid) {
                 buffer.mark_dirty();
                 return Ok(());
             } else {
@@ -148,9 +167,9 @@ impl<'a> Table<'a> {
         }
     }
 
-    pub fn iter(&self) -> Result<HeapTupleIterator> {
+    pub fn iter(&'a self, transaction: &'a Transaction) -> Result<HeapTupleIterator<'a>> {
         let highest_page_no = self.buffer_manager.highest_page_no(self.table_id)?;
-        Ok(HeapTupleIterator::new(highest_page_no, self))
+        Ok(HeapTupleIterator::new(highest_page_no, self, transaction))
     }
 }
 
@@ -164,6 +183,7 @@ mod tests {
     use super::Table;
     use crate::buffer::buffer_manager::BufferManager;
     use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
+    use crate::concurrency::TransactionManager;
     use crate::storage::file_manager::FileManager;
     use crate::tuple::value::Value;
     use crate::tuple::Tuple;
@@ -179,7 +199,8 @@ mod tests {
         let data_dir = tempdir()?;
         let file_manager = FileManager::new(data_dir.path())?;
         file_manager.create_table(1)?;
-        let buffer_manager = BufferManager::new(file_manager, 1);
+        let buffer_manager = BufferManager::new(file_manager, 2);
+        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
 
         let schema = Schema::new(vec![
             ColumnDefinition::new(TypeId::Integer, "non_null_integer".to_owned(), 0, true),
@@ -206,11 +227,14 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
+        let transaction = transaction_manager.start_transaction().unwrap();
         for tuple in &tuples {
-            table.insert_tuple(tuple)?;
+            table.insert_tuple(tuple, transaction.tid())?;
         }
+        transaction.commit()?;
 
-        let collected_tuples = table.iter()?.collect::<Vec<_>>();
+        let transaction = transaction_manager.start_transaction().unwrap();
+        let collected_tuples = table.iter(&transaction)?.collect::<Vec<_>>();
         assert_eq!(tuples.len(), collected_tuples.len());
         for tuple in collected_tuples {
             let tuple = tuple?;

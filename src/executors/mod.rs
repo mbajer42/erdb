@@ -11,6 +11,7 @@ use self::values_executor::ValuesExecutor;
 use crate::buffer::buffer_manager::BufferManager;
 use crate::catalog::schema::Schema;
 use crate::common::TableId;
+use crate::concurrency::Transaction;
 use crate::planner::physical_plan::PhysicalPlan;
 use crate::storage::heap::table::Table;
 use crate::tuple::Tuple;
@@ -31,13 +32,15 @@ pub trait Executor {
 pub struct ExecutorFactory<'a> {
     buffer_manager: &'a BufferManager,
     table_id_to_table: HashMap<TableId, Table<'a>>,
+    transaction: &'a Transaction<'a>,
 }
 
 impl<'a> ExecutorFactory<'a> {
-    pub fn new(buffer_manager: &'a BufferManager) -> Self {
+    pub fn new(buffer_manager: &'a BufferManager, transaction: &'a Transaction) -> Self {
         Self {
             buffer_manager,
             table_id_to_table: HashMap::new(),
+            transaction,
         }
     }
 
@@ -130,7 +133,11 @@ impl<'a> ExecutorFactory<'a> {
             } => {
                 let table = self.get_table(target);
                 let child = self.create_executor_internal(*child)?;
-                Ok(Box::new(InsertExecutor::new(table, child)))
+                Ok(Box::new(InsertExecutor::new(
+                    table,
+                    child,
+                    self.transaction,
+                )))
             }
             PhysicalPlan::FilterPlan { filter, child } => {
                 let child = self.create_executor_internal(*child)?;
@@ -147,10 +154,89 @@ impl<'a> ExecutorFactory<'a> {
 
     fn create_seq_scan_executor(&'a self, table_id: TableId) -> Result<SeqScanExecutor<'a>> {
         let table = self.get_table(table_id);
-        SeqScanExecutor::new(table)
+        SeqScanExecutor::new(table, self.transaction)
     }
 
     fn get_table(&'a self, table_id: TableId) -> &Table {
         self.table_id_to_table.get(&table_id).unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    
+
+    use anyhow::Result;
+    use tempfile::{tempdir, TempDir};
+
+    use super::ExecutorFactory;
+    use crate::analyzer::Analyzer;
+    use crate::buffer::buffer_manager::BufferManager;
+    use crate::catalog::schema::ColumnDefinition;
+    use crate::catalog::Catalog;
+    use crate::concurrency::TransactionManager;
+    use crate::parser::parse_sql;
+    use crate::planner::Planner;
+    use crate::storage::file_manager::FileManager;
+    use crate::tuple::Tuple;
+
+    #[allow(dead_code)]
+    pub struct EmptyTestContext {
+        data_dir: TempDir,
+        buffer_manager: BufferManager,
+    }
+
+    impl EmptyTestContext {
+        pub fn new() -> Self {
+            let data_dir = tempdir().unwrap();
+            let file_manager = FileManager::new(data_dir.path()).unwrap();
+            let buffer_manager = BufferManager::new(file_manager, 2);
+            Self {
+                data_dir,
+                buffer_manager,
+            }
+        }
+    }
+
+    pub struct ExecutionTestContext<'a> {
+        buffer_manager: &'a BufferManager,
+        catalog: Catalog<'a>,
+        transaction_manager: TransactionManager<'a>,
+    }
+
+    impl<'a> ExecutionTestContext<'a> {
+        pub fn new(context: &'a EmptyTestContext) -> Self {
+            let buffer_manager = &context.buffer_manager;
+            let transaction_manager = TransactionManager::new(buffer_manager, true).unwrap();
+            let bootstrap_transaction = transaction_manager.bootstrap();
+            let catalog = Catalog::new(buffer_manager, true, &bootstrap_transaction).unwrap();
+            bootstrap_transaction.commit().unwrap();
+
+            Self {
+                buffer_manager,
+                catalog,
+                transaction_manager,
+            }
+        }
+
+        pub fn create_table(&self, table_name: &str, columns: Vec<ColumnDefinition>) -> Result<()> {
+            self.catalog.create_table(table_name, columns)
+        }
+
+        pub fn execute_query(&self, sql: &str) -> Result<Vec<Tuple>> {
+            let query = parse_sql(sql)?;
+            let analyzer = Analyzer::new(&self.catalog);
+            let query = analyzer.analyze(query)?;
+            let planner = Planner::new();
+            let plan = planner.prepare_logical_plan(query)?;
+            let transaction = self.transaction_manager.start_transaction()?;
+            let mut executor_factory = ExecutorFactory::new(self.buffer_manager, &transaction);
+            let mut executor = executor_factory.create_executor(plan)?;
+            let mut tuples = vec![];
+            while let Some(tuple) = executor.next().transpose()? {
+                tuples.push(tuple);
+            }
+            Ok(tuples)
+        }
     }
 }

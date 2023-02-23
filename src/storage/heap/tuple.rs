@@ -1,6 +1,7 @@
 use super::header::HeapTupleHeader;
 use crate::catalog::schema::Schema;
 use crate::common::PAGE_SIZE;
+use crate::concurrency::{TransactionId};
 use crate::storage::common::{PageHeader, TUPLE_SLOT_SIZE};
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
@@ -9,8 +10,11 @@ use crate::tuple::Tuple;
 // There has to be enough space so that the PageHeader and a TupleSlot will fit.
 pub const MAX_TUPLE_SIZE: u16 = PAGE_SIZE - PageHeader::SIZE - TUPLE_SLOT_SIZE;
 
-pub fn parse_heap_tuple(bytes: &[u8], schema: &Schema) -> Tuple {
-    let header = HeapTupleHeader::from_bytes(bytes, schema.columns().len() as u8);
+pub fn parse_heap_tuple_header(bytes: &[u8], schema: &Schema) -> HeapTupleHeader {
+    HeapTupleHeader::from_bytes(bytes, schema.columns().len() as u8)
+}
+
+pub fn parse_heap_tuple(bytes: &[u8], header: &HeapTupleHeader, schema: &Schema) -> Tuple {
     let tuple_has_null = header.has_null();
 
     let mut offset = header.user_data_start();
@@ -33,13 +37,11 @@ pub fn required_free_space(tuple: &Tuple) -> u16 {
     (header_size + data_size) as u16
 }
 
-pub fn serialize_heap_tuple(buffer: &mut [u8], tuple: &Tuple) {
-    let mut header = HeapTupleHeader::from_tuple(tuple, buffer);
+pub fn serialize_heap_tuple(buffer: &mut [u8], tuple: &Tuple, insert_tid: TransactionId) {
+    let header = HeapTupleHeader::new_tuple(tuple, insert_tid);
     let mut user_data_next_value = header.user_data_start();
-    for (column, value) in tuple.values().iter().enumerate() {
-        if value.is_null() {
-            header.mark_null(column as u8);
-        } else {
+    for (_column, value) in tuple.values().iter().enumerate() {
+        if !value.is_null() {
             value.serialize_value(&mut buffer[user_data_next_value..]);
             user_data_next_value += value.size();
         }
@@ -52,7 +54,7 @@ mod tests {
 
     use lazy_static::lazy_static;
 
-    use super::{parse_heap_tuple, serialize_heap_tuple};
+    use super::{parse_heap_tuple, parse_heap_tuple_header, serialize_heap_tuple};
     use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::tuple::value::Value;
     use crate::tuple::Tuple;
@@ -77,9 +79,10 @@ mod tests {
             Value::Null,
         ];
         let tuple = Tuple::new(values);
-        serialize_heap_tuple(&mut buffer, &tuple);
+        serialize_heap_tuple(&mut buffer, &tuple, 0);
 
-        let parsed_tuple = parse_heap_tuple(&buffer, &TEST_SCHEMA);
+        let header = parse_heap_tuple_header(&buffer, &TEST_SCHEMA);
+        let parsed_tuple = parse_heap_tuple(&buffer, &header, &TEST_SCHEMA);
 
         for (v1, v2) in tuple.values().iter().zip(parsed_tuple.values().iter()) {
             assert_eq!(v1, v2);

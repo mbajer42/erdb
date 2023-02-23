@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{RwLock};
+use std::sync::RwLock;
 
 use anyhow::{Context, Error, Result};
 
@@ -42,6 +42,11 @@ pub struct Transaction<'a> {
 }
 
 impl<'a> Transaction<'a> {
+    /// Returns its own transaction id
+    pub fn tid(&self) -> TransactionId {
+        self.tid
+    }
+
     pub fn commit(&self) -> Result<()> {
         self.manager.commit(self.tid)
     }
@@ -75,11 +80,10 @@ impl<'a> Transaction<'a> {
                     // transaction committed, but when this transaction started it was still alive,
                     // hence, not visible
                     Ok(false)
-                } else if tuple_max_tid == INVALID_TRANSACTION_ID {
-                    // there does not exist a newer version of a tuple, hence, this tuple is visible
-                    Ok(true)
-                } else if tuple_max_tid >= self.tid_max {
-                    // there exists a newer version of a tuple, but regardless of its status,
+                } else if tuple_max_tid == INVALID_TRANSACTION_ID || tuple_max_tid >= self.tid_max {
+                    // 1. if there does not exist a newer version of a tuple (tuple_max_tid == INVALID_TRANSACTION_ID),
+                    // then this tuple is visible
+                    // 2. if there exists a newer version of a tuple, but regardless of its status,
                     // it won't be visible (as it's outside of the snapshot), so the current tuple is visible
                     Ok(true)
                 } else {
@@ -109,12 +113,23 @@ pub struct TransactionManager<'a> {
 }
 
 impl<'a> TransactionManager<'a> {
-    pub fn new(buffer_manager: &'a BufferManager) -> Self {
-        Self {
+    pub fn new(buffer_manager: &'a BufferManager, bootstrap: bool) -> Result<Self> {
+        let this = Self {
             buffer_manager,
             next_tid: AtomicU32::new(2),
             alive_tids: RwLock::new(HashSet::new()),
+        };
+        if bootstrap {
+            buffer_manager
+                .create_table(TRANSACTION_LOG_TABLE_ID)
+                .with_context(|| {
+                    "Could not create a transaction log during bootstrap".to_string()
+                })?;
+        } else {
+            this.load_transaction_log()?;
         }
+
+        Ok(this)
     }
 
     pub fn start_transaction(&'a self) -> Result<Transaction<'a>> {
@@ -145,22 +160,19 @@ impl<'a> TransactionManager<'a> {
         })
     }
 
-    /// Creates the transaction log and returns a transaction which can be used by other parts to complete bootstrap process
-    pub fn bootstrap(&'a self) -> Result<Transaction<'a>> {
-        self.buffer_manager
-            .create_table(TRANSACTION_LOG_TABLE_ID)
-            .with_context(|| "Could not create a transaction log during bootstrap".to_string())?;
-
-        Ok(Transaction {
+    /// Starts a transaction which can be used by other parts to complete bootstrap process.
+    /// Should be used only during bootstrap process
+    pub fn bootstrap(&'a self) -> Transaction<'a> {
+        Transaction {
             tid: BOOTSTRAP_TRANSACTION_ID,
-            tid_max: BOOTSTRAP_TRANSACTION_ID + 1,
+            tid_max: TransactionId::MAX,
             alive_tids: HashSet::new(),
             manager: self,
-        })
+        }
     }
 
     /// Should be used only once during server startup.
-    pub fn load_transaction_log(&self) -> Result<()> {
+    fn load_transaction_log(&self) -> Result<()> {
         let highest_page_no = self
             .buffer_manager
             .highest_page_no(TRANSACTION_LOG_TABLE_ID)?;
@@ -285,10 +297,7 @@ mod tests {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
-        let transaction_manager = TransactionManager::new(&buffer_manager);
-
-        let bootstrap = transaction_manager.bootstrap().unwrap();
-        bootstrap.commit().unwrap();
+        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
 
         let t1 = transaction_manager.start_transaction().unwrap();
         assert_eq!(t1.tid, 2);
@@ -324,7 +333,7 @@ mod tests {
             }
         }
 
-        let transaction_manager = TransactionManager::new(&buffer_manager);
+        let transaction_manager = TransactionManager::new(&buffer_manager, false).unwrap();
         transaction_manager.load_transaction_log().unwrap();
 
         for tid in 4..=(4 * PAGE_SIZE + 3) {

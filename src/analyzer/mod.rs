@@ -542,6 +542,7 @@ mod tests {
     use crate::buffer::buffer_manager::BufferManager;
     use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::catalog::Catalog;
+    use crate::concurrency::TransactionManager;
     use crate::parser::ast::{BinaryOperator, UnaryOperator};
     use crate::parser::parse_sql;
     use crate::storage::file_manager::FileManager;
@@ -551,8 +552,10 @@ mod tests {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
+        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let bootstrap_transaction = transaction_manager.bootstrap();
 
-        let catalog = Catalog::new(&buffer_manager, true).unwrap();
+        let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction).unwrap();
         let columns = vec![
             ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
             ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
@@ -594,8 +597,10 @@ mod tests {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
+        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let bootstrap_transaction = transaction_manager.bootstrap();
 
-        let catalog = Catalog::new(&buffer_manager, true).unwrap();
+        let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction).unwrap();
         let columns = vec![
             ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
             ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
@@ -637,8 +642,10 @@ mod tests {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
+        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let bootstrap_transaction = transaction_manager.bootstrap();
 
-        let catalog = Catalog::new(&buffer_manager, true).unwrap();
+        let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction).unwrap();
         let columns = vec![ColumnDefinition::new(
             TypeId::Integer,
             "id".to_owned(),
@@ -705,13 +712,15 @@ mod tests {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
+        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let bootstrap_transaction = transaction_manager.bootstrap();
 
         let sql = "
             values (1, NULL, 'foo', true), (2, 'bar', NULL, false);
         ";
         let statement = parse_sql(sql).unwrap();
 
-        let catalog = Catalog::new(&buffer_manager, true).unwrap();
+        let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction).unwrap();
         let analyzer = Analyzer::new(&catalog);
         let query = analyzer.analyze(statement).unwrap();
         let expected_output_schema = Schema::new(vec![

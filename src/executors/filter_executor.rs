@@ -2,6 +2,7 @@ use anyhow::Result;
 
 use super::Executor;
 use crate::catalog::schema::Schema;
+
 use crate::planner::physical_plan::Expr;
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
@@ -52,41 +53,14 @@ impl<'a> Executor for FilterExecutor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use tempfile::tempdir;
-
-    use crate::analyzer::Analyzer;
-    use crate::buffer::buffer_manager::BufferManager;
     use crate::catalog::schema::{ColumnDefinition, TypeId};
-    use crate::catalog::Catalog;
-    use crate::executors::ExecutorFactory;
-    use crate::parser::parse_sql;
-    use crate::planner::Planner;
-    use crate::storage::file_manager::FileManager;
-    use crate::tuple::Tuple;
-
-    fn execute_query(sql: &str, buffer_manager: &BufferManager, analyzer: &Analyzer) -> Vec<Tuple> {
-        let query = parse_sql(sql).unwrap();
-        let query = analyzer.analyze(query).unwrap();
-        let planner = Planner::new();
-        let plan = planner.prepare_logical_plan(query).unwrap();
-        let mut executor_factory = ExecutorFactory::new(buffer_manager);
-        let mut executor = executor_factory.create_executor(plan).unwrap();
-
-        let mut tuples = vec![];
-        while let Some(tuple) = executor.next() {
-            tuples.push(tuple.unwrap());
-        }
-
-        tuples
-    }
+    use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
 
     #[test]
     fn can_execute_queries_with_filter_conditions() {
-        let data_dir = tempdir().unwrap();
-        let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = BufferManager::new(file_manager, 1);
-        let catalog = Catalog::new(&buffer_manager, true).unwrap();
-        catalog
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        execution_test_context
             .create_table(
                 "numbers",
                 vec![ColumnDefinition::new(
@@ -97,14 +71,17 @@ mod tests {
                 )],
             )
             .unwrap();
-        let analyzer = Analyzer::new(&catalog);
 
         let insert_statement =
             "insert into numbers values (1), (2), (3), (4), (5), (6), (7), (8), (9)";
-        execute_query(insert_statement, &buffer_manager, &analyzer);
+        execution_test_context
+            .execute_query(insert_statement)
+            .unwrap();
 
         let select = "select number from numbers where number % 2 = 0";
-        let mut result = execute_query(select, &buffer_manager, &analyzer)
+        let mut result = execution_test_context
+            .execute_query(select)
+            .unwrap()
             .iter()
             .map(|tuple| tuple.values()[0].as_i32())
             .collect::<Vec<i32>>();
