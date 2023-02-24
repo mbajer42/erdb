@@ -11,7 +11,7 @@ use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
 use crate::common::{
     TableId, CATALOG_COLUMNS_TABLE_ID, CATALOG_TABLES_TABLE_ID, USER_DATA_TABLE_ID_START,
 };
-use crate::concurrency::{Transaction, TransactionId, BOOTSTRAP_TRANSACTION_ID};
+use crate::concurrency::{Transaction, TransactionId};
 use crate::storage::heap::table::Table;
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
@@ -159,7 +159,12 @@ impl<'a> Catalog<'a> {
         Ok(())
     }
 
-    pub fn create_table(&self, table_name: &str, columns: Vec<ColumnDefinition>) -> Result<()> {
+    pub fn create_table(
+        &self,
+        table_name: &str,
+        columns: Vec<ColumnDefinition>,
+        transaction: &Transaction,
+    ) -> Result<()> {
         match self.table_name_to_id.entry(table_name.to_owned()) {
             Entry::Occupied(_) => {
                 return Err(Error::msg(format!(
@@ -171,8 +176,8 @@ impl<'a> Catalog<'a> {
                 let table_id = self.generate_table_id()?;
                 self.buffer_manager.create_table(table_id)?;
 
-                self.persist_table(table_id, table_name, BOOTSTRAP_TRANSACTION_ID)?;
-                self.persist_columns(table_id, &columns, BOOTSTRAP_TRANSACTION_ID)?;
+                self.persist_table(table_id, table_name, transaction.tid())?;
+                self.persist_columns(table_id, &columns, transaction.tid())?;
 
                 self.table_id_to_schema
                     .insert(table_id, Schema::new(columns));
@@ -289,7 +294,9 @@ mod tests {
             ColumnDefinition::new(TypeId::Text, "email".to_owned(), 3, false),
         ];
 
-        catalog.create_table("accounts", expected_columns.clone())?;
+        let transaction = transaction_manager.start_transaction()?;
+        catalog.create_table("accounts", expected_columns.clone(), &transaction)?;
+        transaction.commit()?;
         let fetched_columns = catalog.get_schema("accounts");
         assert!(fetched_columns.is_some());
         let fetched_columns = fetched_columns.unwrap();

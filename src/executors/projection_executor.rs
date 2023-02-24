@@ -2,7 +2,6 @@ use anyhow::Result;
 
 use super::Executor;
 use crate::catalog::schema::Schema;
-
 use crate::planner::physical_plan::Expr;
 use crate::tuple::Tuple;
 
@@ -51,18 +50,9 @@ impl<'a> Executor for ProjectionExecutor<'a> {
 
 #[cfg(test)]
 mod tests {
-    
 
-    
-    
-    
-    
     use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
-    
     use crate::parser::ast::BinaryOperator;
-    
-    
-    
     use crate::tuple::value::Value;
 
     fn execute_query_expect_single_tuple(

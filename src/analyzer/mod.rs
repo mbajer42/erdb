@@ -560,7 +560,11 @@ mod tests {
             ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
             ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
         ];
-        catalog.create_table("accounts", columns).unwrap();
+        let transaction = transaction_manager.start_transaction().unwrap();
+        catalog
+            .create_table("accounts", columns, &transaction)
+            .unwrap();
+        transaction.commit().unwrap();
         let table_id = catalog.get_table_id("accounts").unwrap();
         let schema = catalog.get_schema("accounts").unwrap();
 
@@ -605,7 +609,11 @@ mod tests {
             ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
             ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
         ];
-        catalog.create_table("accounts", columns).unwrap();
+        let transaction = transaction_manager.start_transaction().unwrap();
+        catalog
+            .create_table("accounts", columns, &transaction)
+            .unwrap();
+        transaction.commit().unwrap();
         let table_id = catalog.get_table_id("accounts").unwrap();
         let schema = catalog.get_schema("accounts").unwrap();
 
@@ -652,7 +660,11 @@ mod tests {
             0,
             true,
         )];
-        catalog.create_table("accounts", columns).unwrap();
+        let transaction = transaction_manager.start_transaction().unwrap();
+        catalog
+            .create_table("accounts", columns, &transaction)
+            .unwrap();
+        transaction.commit().unwrap();
         let table_id = catalog.get_table_id("accounts").unwrap();
         let schema = catalog.get_schema("accounts").unwrap();
 

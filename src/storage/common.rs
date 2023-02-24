@@ -15,17 +15,17 @@ impl<'a> Serializer<'a> {
     }
 
     pub fn serialize_u8(&mut self, val: u8) {
-        self.buffer[self.pos .. self.pos + U8_SIZE].copy_from_slice(val.to_be_bytes().as_slice());
+        self.buffer[self.pos..self.pos + U8_SIZE].copy_from_slice(val.to_be_bytes().as_slice());
         self.pos += U8_SIZE;
     }
 
     pub fn serialize_u16(&mut self, val: u16) {
-        self.buffer[self.pos .. self.pos+U16_SIZE].copy_from_slice(val.to_be_bytes().as_slice());
+        self.buffer[self.pos..self.pos + U16_SIZE].copy_from_slice(val.to_be_bytes().as_slice());
         self.pos += U16_SIZE;
     }
 
     pub fn serialize_u32(&mut self, val: u32) {
-        self.buffer[self.pos.. self.pos+U32_SIZE].copy_from_slice(val.to_be_bytes().as_slice());
+        self.buffer[self.pos..self.pos + U32_SIZE].copy_from_slice(val.to_be_bytes().as_slice());
         self.pos += U32_SIZE;
     }
 

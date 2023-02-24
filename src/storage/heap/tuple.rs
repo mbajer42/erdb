@@ -1,7 +1,7 @@
 use super::header::HeapTupleHeader;
 use crate::catalog::schema::Schema;
 use crate::common::PAGE_SIZE;
-use crate::concurrency::{TransactionId};
+use crate::concurrency::TransactionId;
 use crate::storage::common::{PageHeader, TUPLE_SLOT_SIZE};
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;

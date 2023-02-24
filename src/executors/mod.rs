@@ -164,7 +164,6 @@ impl<'a> ExecutorFactory<'a> {
 
 #[cfg(test)]
 mod tests {
-    
 
     use anyhow::Result;
     use tempfile::{tempdir, TempDir};
@@ -220,7 +219,9 @@ mod tests {
         }
 
         pub fn create_table(&self, table_name: &str, columns: Vec<ColumnDefinition>) -> Result<()> {
-            self.catalog.create_table(table_name, columns)
+            let transaction = self.transaction_manager.start_transaction()?;
+            self.catalog.create_table(table_name, columns, &transaction)?;
+            transaction.commit()
         }
 
         pub fn execute_query(&self, sql: &str) -> Result<Vec<Tuple>> {

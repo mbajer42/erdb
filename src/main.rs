@@ -123,7 +123,9 @@ fn handle_sql_statement(
     match statement {
         Statement::CreateTable { name, columns } => {
             let columns = columns.into_iter().map(|col| col.into()).collect();
-            catalog.create_table(&name, columns)?;
+            let transaction = transaction_manager.start_transaction()?;
+            catalog.create_table(&name, columns, &transaction)?;
+            transaction.commit()?;
             writer.write_all("Table created".as_bytes())?;
         }
         query => {
@@ -229,24 +231,6 @@ fn main() -> Result<()> {
         let transaction_manager = &transaction_manager;
         let catalog = &catalog;
 
-        scope.spawn(|| {
-            println!("Press enter to flush all buffers");
-            let mut buffer = String::new();
-            loop {
-                match std::io::stdin().read_line(&mut buffer) {
-                    Ok(_) => {
-                        println!("Flushing all buffers...");
-                        match buffer_manager.flush_all_buffers() {
-                            Ok(()) => println!("Done"),
-                            Err(e) => println!("Failed. Reason: {}", e),
-                        }
-                    }
-                    Err(e) => {
-                        println!("Could not read user input. Reason: {}", e);
-                    }
-                }
-            }
-        });
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {

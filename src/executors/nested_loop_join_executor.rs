@@ -2,7 +2,6 @@ use anyhow::Result;
 
 use super::Executor;
 use crate::catalog::schema::Schema;
-
 use crate::parser::ast::JoinType;
 use crate::planner::physical_plan::Expr;
 use crate::tuple::value::Value;
@@ -121,17 +120,9 @@ impl<'a> Executor for NestedLoopJoinExecutor<'a> {
 
 #[cfg(test)]
 mod tests {
-    
 
-    
-    
     use crate::catalog::schema::{ColumnDefinition, TypeId};
-    
     use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
-    
-    
-    
-    
     use crate::tuple::value::Value;
     use crate::tuple::Tuple;
 
@@ -157,10 +148,14 @@ mod tests {
             .unwrap();
 
         let insert_numbers = "insert into numbers values (1, 1), (2, 2), (3, 3), (4, 4)";
-        execution_test_context.execute_query(insert_numbers).unwrap();
+        execution_test_context
+            .execute_query(insert_numbers)
+            .unwrap();
 
         let insert_strings = "insert into strings values (1, 'foo'), (2, 'bar'), (3, 'baz')";
-        execution_test_context.execute_query(insert_strings).unwrap();
+        execution_test_context
+            .execute_query(insert_strings)
+            .unwrap();
     }
 
     #[test]

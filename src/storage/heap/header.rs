@@ -1,6 +1,3 @@
-
-
-
 use crate::common::MAX_COLUMNS;
 use crate::concurrency::TransactionId;
 use crate::storage::common::{Deserializer, Serializer};

@@ -2,7 +2,6 @@ use anyhow::Result;
 
 use super::Executor;
 use crate::catalog::schema::Schema;
-
 use crate::planner::physical_plan::Expr;
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
