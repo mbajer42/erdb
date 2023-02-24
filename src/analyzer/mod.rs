@@ -98,17 +98,18 @@ impl<'a> Analyzer<'a> {
         let mut projections = vec![];
         let mut output_columns = vec![];
 
-        for (col, (expr, name, type_id)) in projections_with_specification.into_iter().enumerate() {
+        for (col, (expr, mut col_def)) in projections_with_specification.into_iter().enumerate() {
             projections.push(expr);
-            output_columns.push(ColumnDefinition::new(type_id, name, col as u8, false));
+            col_def.column_offset = col as u8;
+            output_columns.push(col_def);
         }
 
         let filter = if let Some(filter_expr) = filter {
-            let (expr, type_id) = Self::analyze_expression(filter_expr, &table)?;
-            if type_id != TypeId::Unknown && type_id != TypeId::Boolean {
+            let (expr, col_def) = Self::analyze_expression(filter_expr, &table)?;
+            if col_def.type_id != TypeId::Unknown && col_def.type_id != TypeId::Boolean {
                 return Err(Error::msg(format!(
                     "WHERE condition must evaluate to boolean, but evaluates to {}",
-                    type_id
+                    col_def.type_id
                 )));
             }
             Some(expr)
@@ -133,30 +134,27 @@ impl<'a> Analyzer<'a> {
         for (row, current_values) in values.into_iter().enumerate() {
             let mut current_expressions = vec![];
             for (col, value) in current_values.into_iter().enumerate() {
-                let (expr, type_id) = Self::analyze_expression(value, &TableReference::EmptyTable)?;
+                let (expr, mut col_def) =
+                    Self::analyze_expression(value, &TableReference::EmptyTable)?;
 
                 if !first_row_added {
-                    let column_name = format!("col_{}", col);
-                    let not_null = expr != LogicalExpr::Null;
-                    output_columns.push(ColumnDefinition::new(
-                        type_id,
-                        column_name,
-                        col as u8,
-                        not_null,
-                    ));
-                } else if let Some(col_def) = output_columns.get_mut(col) {
-                    if col_def.type_id() == TypeId::Unknown {
+                    col_def.column_name = format!("col_{}", col);
+                    col_def.not_null = expr != LogicalExpr::Null;
+                    col_def.column_offset = col as u8;
+                    output_columns.push(col_def);
+                } else if let Some(result_def) = output_columns.get_mut(col) {
+                    if result_def.type_id == TypeId::Unknown {
                         // first value was null
-                        col_def.set_type_id(type_id);
-                    } else if type_id == TypeId::Unknown {
+                        result_def.type_id = col_def.type_id;
+                    } else if col_def.type_id == TypeId::Unknown {
                         // current value is null, so column is nullable
-                        col_def.set_not_null(false);
-                    } else if col_def.type_id() != type_id {
+                        result_def.not_null = false;
+                    } else if result_def.type_id != col_def.type_id {
                         return Err(Error::msg(format!(
                             "Type mismatch in row {}. Expected '{}' but found '{}'",
                             row,
-                            col_def.type_id(),
-                            type_id
+                            result_def.type_id(),
+                            col_def.type_id
                         )));
                     }
                 }
@@ -244,12 +242,12 @@ impl<'a> Analyzer<'a> {
                     join_type,
                     on: vec![],
                 };
-                let (on_expr, on_type) = Self::analyze_expression(on, &result_table)?;
+                let (on_expr, on_def) = Self::analyze_expression(on, &result_table)?;
 
-                if on_type != TypeId::Boolean && on_type != TypeId::Unknown {
+                if on_def.type_id != TypeId::Boolean && on_def.type_id != TypeId::Unknown {
                     return Err(Error::msg(format!(
                         "JOIN conditions must evaluate to boolean but evaluates to: {}",
-                        on_type
+                        on_def.type_id
                     )));
                 }
 
@@ -283,7 +281,7 @@ impl<'a> Analyzer<'a> {
         &self,
         projections: Vec<ast::Projection>,
         scope: &TableReference,
-    ) -> Result<Vec<(LogicalExpr, String, TypeId)>> {
+    ) -> Result<Vec<(LogicalExpr, ColumnDefinition)>> {
         let mut result = vec![];
 
         for projection in projections.into_iter() {
@@ -307,16 +305,18 @@ impl<'a> Analyzer<'a> {
         &self,
         projection: ast::Projection,
         scope: &TableReference,
-    ) -> Result<(LogicalExpr, String, TypeId)> {
+    ) -> Result<(LogicalExpr, ColumnDefinition)> {
         match projection {
             Projection::UnnamedExpr(expr) => {
                 let alias = expr.to_string();
-                let (expr, type_id) = Self::analyze_expression(expr, scope)?;
-                Ok((expr, alias, type_id))
+                let (expr, mut col_def) = Self::analyze_expression(expr, scope)?;
+                col_def.column_name = alias;
+                Ok((expr, col_def))
             }
             Projection::NamedExpr { expr, alias } => {
-                let (expr, type_id) = Self::analyze_expression(expr, scope)?;
-                Ok((expr, alias, type_id))
+                let (expr, mut col_def) = Self::analyze_expression(expr, scope)?;
+                col_def.column_name = alias;
+                Ok((expr, col_def))
             }
             Projection::Wildcard | Projection::QualifiedWildcard { table: _ } => {
                 unreachable!("Should be already handled")
@@ -327,7 +327,7 @@ impl<'a> Analyzer<'a> {
     fn analyze_expression(
         expr: ast::ExprNode,
         scope: &TableReference,
-    ) -> Result<(LogicalExpr, TypeId)> {
+    ) -> Result<(LogicalExpr, ColumnDefinition)> {
         match expr {
             ExprNode::Identifier(column_name) => {
                 let column = Self::identify_column(scope, None, &column_name)?;
@@ -339,39 +339,45 @@ impl<'a> Analyzer<'a> {
             }
             ExprNode::QualifiedIdentifier(table, column_name) => {
                 let column = Self::identify_column(scope, Some(&table), &column_name)?;
-                if let Some(res) = column {
-                    Ok(res)
-                } else {
-                    Err(Error::msg(format!(
-                        "Could not find column {}.{}",
-                        table, column_name
-                    )))
-                }
+                column.ok_or_else(|| {
+                    Error::msg(format!("Coudl not find column {}.{}", table, column_name))
+                })
             }
 
             ExprNode::Number(number) => {
                 let num = number.parse::<i32>()?;
-                Ok((LogicalExpr::Integer(num), TypeId::Integer))
+                Ok((
+                    LogicalExpr::Integer(num),
+                    ColumnDefinition::with_type_id(TypeId::Integer),
+                ))
             }
-            ExprNode::String(s) => Ok((LogicalExpr::String(s), TypeId::Text)),
-            ExprNode::Boolean(val) => Ok((LogicalExpr::Boolean(val), TypeId::Boolean)),
+            ExprNode::String(s) => Ok((
+                LogicalExpr::String(s),
+                ColumnDefinition::with_type_id(TypeId::Text),
+            )),
+            ExprNode::Boolean(val) => Ok((
+                LogicalExpr::Boolean(val),
+                ColumnDefinition::with_type_id(TypeId::Boolean),
+            )),
             ExprNode::Grouping(expr) => Self::analyze_expression(*expr, scope),
             ExprNode::Binary { left, op, right } => {
-                let (left, left_type) = Self::analyze_expression(*left, scope)?;
-                let (right, right_type) = Self::analyze_expression(*right, scope)?;
+                let (left, left_def) = Self::analyze_expression(*left, scope)?;
+                let (right, right_def) = Self::analyze_expression(*right, scope)?;
                 let result_type = match op {
                     BinaryOperator::Plus
                     | BinaryOperator::Minus
                     | BinaryOperator::Multiply
                     | BinaryOperator::Divide
                     | BinaryOperator::Modulo => {
-                        if left_type != TypeId::Integer || right_type != TypeId::Integer {
+                        if left_def.type_id != TypeId::Integer
+                            || right_def.type_id != TypeId::Integer
+                        {
                             return Err(Error::msg(format!(
                                 "Arguments for '{}' must be of type integer. Left: {}, Right: {}",
-                                op, left_type, right_type
+                                op, left_def.type_id, right_def.type_id
                             )));
                         }
-                        TypeId::Integer
+                        ColumnDefinition::with_type_id(TypeId::Integer)
                     }
                     BinaryOperator::Eq
                     | BinaryOperator::NotEq
@@ -379,26 +385,28 @@ impl<'a> Analyzer<'a> {
                     | BinaryOperator::LessEq
                     | BinaryOperator::Greater
                     | BinaryOperator::GreaterEq => {
-                        if left_type != right_type
-                            && left_type != TypeId::Unknown
-                            && right_type != TypeId::Unknown
+                        if left_def.type_id != right_def.type_id
+                            && left_def.type_id != TypeId::Unknown
+                            && right_def.type_id != TypeId::Unknown
                         {
                             return Err(Error::msg(format!(
                                 "Arguments for '{}' must be of same type. Left: {}, Right: {}",
-                                op, left_type, right_type
+                                op, left_def.type_id, right_def.type_id
                             )));
                         }
-                        TypeId::Boolean
+                        ColumnDefinition::with_type_id(TypeId::Boolean)
                     }
                     BinaryOperator::And | BinaryOperator::Or => {
                         let valid_types = [TypeId::Boolean, TypeId::Unknown];
-                        if !valid_types.contains(&left_type) || !valid_types.contains(&right_type) {
+                        if !valid_types.contains(&left_def.type_id)
+                            || !valid_types.contains(&right_def.type_id)
+                        {
                             return Err(Error::msg(format!(
                                 "Arguments for '{}' must be of type boolean. Left: {}, Right: {}",
-                                op, left_type, right_type
+                                op, left_def.type_id, right_def.type_id
                             )));
                         }
-                        TypeId::Boolean
+                        ColumnDefinition::with_type_id(TypeId::Boolean)
                     }
                 };
                 Ok((
@@ -411,11 +419,11 @@ impl<'a> Analyzer<'a> {
                 ))
             }
             ExprNode::Unary { op, expr } => {
-                let (expr, type_id) = Self::analyze_expression(*expr, scope)?;
-                if type_id != TypeId::Integer {
+                let (expr, col_def) = Self::analyze_expression(*expr, scope)?;
+                if col_def.type_id != TypeId::Integer {
                     Err(Error::msg(format!(
                         "Cannot apply '{}' to type {}",
-                        op, type_id
+                        op, col_def.type_id
                     )))
                 } else {
                     Ok((
@@ -423,19 +431,28 @@ impl<'a> Analyzer<'a> {
                             op,
                             expr: Box::new(expr),
                         },
-                        type_id,
+                        ColumnDefinition::with_type_id(TypeId::Integer),
                     ))
                 }
             }
             ExprNode::IsNull(expr) => {
                 let (expr, _) = Self::analyze_expression(*expr, scope)?;
-                Ok((LogicalExpr::IsNull(Box::new(expr)), TypeId::Boolean))
+                Ok((
+                    LogicalExpr::IsNull(Box::new(expr)),
+                    ColumnDefinition::with_type_id(TypeId::Boolean),
+                ))
             }
             ExprNode::IsNotNull(expr) => {
                 let (expr, _) = Self::analyze_expression(*expr, scope)?;
-                Ok((LogicalExpr::IsNotNull(Box::new(expr)), TypeId::Boolean))
+                Ok((
+                    LogicalExpr::IsNotNull(Box::new(expr)),
+                    ColumnDefinition::with_type_id(TypeId::Boolean),
+                ))
             }
-            ExprNode::Null => Ok((LogicalExpr::Null, TypeId::Unknown)),
+            ExprNode::Null => Ok((
+                LogicalExpr::Null,
+                ColumnDefinition::with_type_id(TypeId::Unknown),
+            )),
         }
     }
 
@@ -443,7 +460,7 @@ impl<'a> Analyzer<'a> {
         scope: &TableReference,
         table: Option<&str>,
         column: &str,
-    ) -> Result<Option<(LogicalExpr, TypeId)>> {
+    ) -> Result<Option<(LogicalExpr, ColumnDefinition)>> {
         match scope {
             TableReference::BaseTable {
                 table_id: _,
@@ -458,7 +475,12 @@ impl<'a> Analyzer<'a> {
                 let column = schema.find_column(column).map(|col_def| {
                     (
                         LogicalExpr::Column(vec![name.clone(), col_def.column_name().to_owned()]),
-                        col_def.type_id(),
+                        ColumnDefinition::new(
+                            col_def.type_id(),
+                            String::new(),
+                            col_def.column_offset(),
+                            col_def.not_null(),
+                        ),
                     )
                 });
                 Ok(column)
@@ -489,7 +511,7 @@ impl<'a> Analyzer<'a> {
     fn get_all_columns(
         scope: &TableReference,
         table: Option<String>,
-    ) -> Vec<(LogicalExpr, String, TypeId)> {
+    ) -> Vec<(LogicalExpr, ColumnDefinition)> {
         match scope {
             TableReference::BaseTable {
                 table_id: _,
@@ -505,14 +527,18 @@ impl<'a> Analyzer<'a> {
                     .columns()
                     .iter()
                     .map(|col_def| {
-                        (
-                            LogicalExpr::Column(vec![
-                                table_name.clone(),
-                                col_def.column_name().to_owned(),
-                            ]),
-                            format!("{}.{}", table_name, col_def.column_name()),
+                        let expr = LogicalExpr::Column(vec![
+                            table_name.clone(),
+                            col_def.column_name().to_owned(),
+                        ]);
+                        let name = format!("{}.{}", table_name, col_def.column_name());
+                        let new_col_def = ColumnDefinition::new(
                             col_def.type_id(),
-                        )
+                            name,
+                            col_def.column_offset(),
+                            col_def.not_null(),
+                        );
+                        (expr, new_col_def)
                     })
                     .collect()
             }
@@ -587,8 +613,8 @@ mod tests {
             ],
             filter: None,
             output_schema: Schema::new(vec![
-                ColumnDefinition::new(TypeId::Integer, "accounts.id".to_owned(), 0, false),
-                ColumnDefinition::new(TypeId::Text, "accounts.name".to_owned(), 1, false),
+                ColumnDefinition::new(TypeId::Integer, "accounts.id".to_owned(), 0, true),
+                ColumnDefinition::new(TypeId::Text, "accounts.name".to_owned(), 1, true),
             ]),
             values: vec![],
         });
@@ -636,8 +662,8 @@ mod tests {
             ],
             filter: None,
             output_schema: Schema::new(vec![
-                ColumnDefinition::new(TypeId::Integer, "acc.id".to_owned(), 0, false),
-                ColumnDefinition::new(TypeId::Text, "acc.name".to_owned(), 1, false),
+                ColumnDefinition::new(TypeId::Integer, "acc.id".to_owned(), 0, true),
+                ColumnDefinition::new(TypeId::Text, "acc.name".to_owned(), 1, true),
             ]),
             values: vec![],
         });
@@ -709,9 +735,9 @@ mod tests {
             ],
             filter: None,
             output_schema: Schema::new(vec![
-                ColumnDefinition::new(TypeId::Integer, "negative_id".to_owned(), 0, false),
-                ColumnDefinition::new(TypeId::Integer, "id + 1".to_owned(), 1, false),
-                ColumnDefinition::new(TypeId::Integer, "2 * (3 + 5)".to_owned(), 2, false),
+                ColumnDefinition::new(TypeId::Integer, "negative_id".to_owned(), 0, true),
+                ColumnDefinition::new(TypeId::Integer, "id + 1".to_owned(), 1, true),
+                ColumnDefinition::new(TypeId::Integer, "2 * (3 + 5)".to_owned(), 2, true),
             ]),
             values: vec![],
         });

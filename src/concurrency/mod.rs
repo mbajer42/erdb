@@ -7,6 +7,7 @@ use anyhow::{Context, Error, Result};
 use crate::buffer::buffer_manager::{BufferGuard, BufferManager};
 use crate::common::{INVALID_PAGE_NO, PAGE_SIZE, TRANSACTION_LOG_TABLE_ID};
 
+pub type CommandId = u8;
 pub type TransactionId = u32;
 pub const INVALID_TRANSACTION_ID: TransactionId = 0;
 pub const BOOTSTRAP_TRANSACTION_ID: TransactionId = 1;
@@ -37,6 +38,8 @@ pub struct Transaction<'a> {
     tid: TransactionId,
     /// first unassigned transaction id
     tid_max: TransactionId,
+    /// how many commands were run so far
+    command_id: CommandId,
     alive_tids: HashSet<TransactionId>,
     manager: &'a TransactionManager<'a>,
 }
@@ -45,6 +48,11 @@ impl<'a> Transaction<'a> {
     /// Returns its own transaction id
     pub fn tid(&self) -> TransactionId {
         self.tid
+    }
+
+    /// Returns the current command id
+    pub fn command_id(&self) -> CommandId {
+        self.command_id
     }
 
     pub fn commit(&self) -> Result<()> {
@@ -58,6 +66,7 @@ impl<'a> Transaction<'a> {
     pub fn is_tuple_visible(
         &self,
         tuple_min_tid: TransactionId,
+        command_id: CommandId,
         tuple_max_tid: TransactionId,
     ) -> Result<bool> {
         if tuple_min_tid >= self.tid_max {
@@ -68,9 +77,10 @@ impl<'a> Transaction<'a> {
             // invalid or aborted transaction ids are never visible
             TransactionStatus::Invalid | TransactionStatus::Aborted => Ok(false),
             // an in progress transaction id is only visible, if the tuple was inserted by the very same transaction
+            // by an earlier command
             TransactionStatus::InProgress => {
                 if tuple_min_tid == self.tid {
-                    Ok(tuple_max_tid == INVALID_TRANSACTION_ID)
+                    Ok(tuple_max_tid == INVALID_TRANSACTION_ID && self.command_id < command_id)
                 } else {
                     Ok(false)
                 }
@@ -155,6 +165,7 @@ impl<'a> TransactionManager<'a> {
         Ok(Transaction {
             tid,
             tid_max,
+            command_id: 0,
             alive_tids: alive_tids.clone(),
             manager: self,
         })
@@ -166,6 +177,7 @@ impl<'a> TransactionManager<'a> {
         Transaction {
             tid: BOOTSTRAP_TRANSACTION_ID,
             tid_max: TransactionId::MAX,
+            command_id: 0,
             alive_tids: HashSet::new(),
             manager: self,
         }

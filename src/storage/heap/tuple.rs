@@ -37,8 +37,13 @@ pub fn required_free_space(tuple: &Tuple) -> u16 {
     (header_size + data_size) as u16
 }
 
-pub fn serialize_heap_tuple(buffer: &mut [u8], tuple: &Tuple, insert_tid: TransactionId) {
-    let header = HeapTupleHeader::new_tuple(tuple, insert_tid);
+pub fn serialize_heap_tuple(
+    buffer: &mut [u8],
+    tuple: &Tuple,
+    insert_tid: TransactionId,
+    command_id: u8,
+) {
+    let header = HeapTupleHeader::new_tuple(tuple, insert_tid, command_id);
     let mut user_data_next_value = header.user_data_start();
     for (_column, value) in tuple.values().iter().enumerate() {
         if !value.is_null() {
@@ -79,7 +84,7 @@ mod tests {
             Value::Null,
         ];
         let tuple = Tuple::new(values);
-        serialize_heap_tuple(&mut buffer, &tuple, 0);
+        serialize_heap_tuple(&mut buffer, &tuple, 0, 0);
 
         let header = parse_heap_tuple_header(&buffer, &TEST_SCHEMA);
         let parsed_tuple = parse_heap_tuple(&buffer, &header, &TEST_SCHEMA);

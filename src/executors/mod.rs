@@ -220,7 +220,8 @@ mod tests {
 
         pub fn create_table(&self, table_name: &str, columns: Vec<ColumnDefinition>) -> Result<()> {
             let transaction = self.transaction_manager.start_transaction()?;
-            self.catalog.create_table(table_name, columns, &transaction)?;
+            self.catalog
+                .create_table(table_name, columns, &transaction)?;
             transaction.commit()
         }
 

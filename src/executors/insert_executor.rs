@@ -45,7 +45,7 @@ impl<'a> InsertExecutor<'a> {
         } else {
             self.done = true;
             while let Some(tuple) = self.child.next().transpose()? {
-                self.table.insert_tuple(&tuple, self.transaction.tid())?;
+                self.table.insert_tuple(&tuple, self.transaction)?;
                 self.tuples_inserted += 1;
             }
             self.transaction.commit()?;
@@ -65,5 +65,51 @@ impl<'a> Executor for InsertExecutor<'a> {
 
     fn rewind(&mut self) -> Result<()> {
         unreachable!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::catalog::schema::{ColumnDefinition, TypeId};
+    use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
+
+    #[test]
+    fn can_insert_from_own_table() {
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        execution_test_context
+            .create_table(
+                "numbers",
+                vec![ColumnDefinition::new(
+                    TypeId::Integer,
+                    "number".to_owned(),
+                    0,
+                    true,
+                )],
+            )
+            .unwrap();
+
+        let insert_statement = "insert into numbers values (1), (3), (5), (7), (9)";
+        execution_test_context
+            .execute_query(insert_statement)
+            .unwrap();
+
+        let insert_statement = "insert into numbers select number+1 from numbers";
+        execution_test_context
+            .execute_query(insert_statement)
+            .unwrap();
+
+        let select = "select number from numbers";
+        let mut result = execution_test_context
+            .execute_query(select)
+            .unwrap()
+            .iter()
+            .map(|tuple| tuple.values()[0].as_i32())
+            .collect::<Vec<i32>>();
+        result.sort();
+
+        let expected_numbers = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+        assert_eq!(result, expected_numbers);
     }
 }

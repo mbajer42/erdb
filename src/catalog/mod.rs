@@ -11,7 +11,7 @@ use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
 use crate::common::{
     TableId, CATALOG_COLUMNS_TABLE_ID, CATALOG_TABLES_TABLE_ID, USER_DATA_TABLE_ID_START,
 };
-use crate::concurrency::{Transaction, TransactionId};
+use crate::concurrency::Transaction;
 use crate::storage::heap::table::Table;
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
@@ -100,22 +100,22 @@ impl<'a> Catalog<'a> {
         self.persist_table(
             CATALOG_TABLES_TABLE_ID,
             CATALOG_TABLES_NAME,
-            bootstrap_transaction.tid(),
+            bootstrap_transaction,
         )?;
         self.persist_table(
             CATALOG_COLUMNS_TABLE_ID,
             CATALOG_COLUMNS_NAME,
-            bootstrap_transaction.tid(),
+            bootstrap_transaction,
         )?;
         self.persist_columns(
             CATALOG_TABLES_TABLE_ID,
             CATALOG_TABLES_SCHEMA.columns(),
-            bootstrap_transaction.tid(),
+            bootstrap_transaction,
         )?;
         self.persist_columns(
             CATALOG_COLUMNS_TABLE_ID,
             CATALOG_COLUMNS_SCHEMA.columns(),
-            bootstrap_transaction.tid(),
+            bootstrap_transaction,
         )?;
 
         Ok(())
@@ -176,8 +176,8 @@ impl<'a> Catalog<'a> {
                 let table_id = self.generate_table_id()?;
                 self.buffer_manager.create_table(table_id)?;
 
-                self.persist_table(table_id, table_name, transaction.tid())?;
-                self.persist_columns(table_id, &columns, transaction.tid())?;
+                self.persist_table(table_id, table_name, transaction)?;
+                self.persist_columns(table_id, &columns, transaction)?;
 
                 self.table_id_to_schema
                     .insert(table_id, Schema::new(columns));
@@ -192,7 +192,7 @@ impl<'a> Catalog<'a> {
         &self,
         table_id: TableId,
         columns: &[ColumnDefinition],
-        insert_transaction_id: TransactionId,
+        transaction: &Transaction,
     ) -> Result<()> {
         for column in columns {
             let values = vec![
@@ -203,8 +203,7 @@ impl<'a> Catalog<'a> {
                 Value::Boolean(column.not_null()),
             ];
             let tuple = Tuple::new(values);
-            self.columns_table
-                .insert_tuple(&tuple, insert_transaction_id)?;
+            self.columns_table.insert_tuple(&tuple, transaction)?;
         }
         Ok(())
     }
@@ -225,14 +224,13 @@ impl<'a> Catalog<'a> {
         &self,
         table_id: TableId,
         table_name: &str,
-        insert_transaction_id: TransactionId,
+        transaction: &Transaction,
     ) -> Result<()> {
         let table_tuple = Tuple::new(vec![
             Value::Integer(table_id as i32),
             Value::String(table_name.to_owned()),
         ]);
-        self.tables_table
-            .insert_tuple(&table_tuple, insert_transaction_id)?;
+        self.tables_table.insert_tuple(&table_tuple, transaction)?;
         Ok(())
     }
 }

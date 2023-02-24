@@ -46,10 +46,10 @@ impl Display for TypeId {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ColumnDefinition {
-    type_id: TypeId,
-    column_name: String,
-    column_offset: u8,
-    not_null: bool,
+    pub type_id: TypeId,
+    pub column_name: String,
+    pub column_offset: u8,
+    pub not_null: bool,
 }
 
 impl ColumnDefinition {
@@ -62,12 +62,18 @@ impl ColumnDefinition {
         }
     }
 
-    pub fn type_id(&self) -> TypeId {
-        self.type_id
+    /// creates a column definition where only the type is known
+    pub fn with_type_id(type_id: TypeId) -> Self {
+        Self {
+            type_id,
+            column_name: String::new(),
+            column_offset: 0,
+            not_null: type_id != TypeId::Unknown,
+        }
     }
 
-    pub fn set_type_id(&mut self, type_id: TypeId) {
-        self.type_id = type_id;
+    pub fn type_id(&self) -> TypeId {
+        self.type_id
     }
 
     pub fn column_name(&self) -> &str {
@@ -80,10 +86,6 @@ impl ColumnDefinition {
 
     pub fn not_null(&self) -> bool {
         self.not_null
-    }
-
-    pub fn set_not_null(&mut self, not_null: bool) {
-        self.not_null = not_null;
     }
 }
 

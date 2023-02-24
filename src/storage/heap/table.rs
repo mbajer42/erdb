@@ -10,7 +10,7 @@ use super::tuple::{
 use crate::buffer::buffer_manager::{BufferGuard, BufferManager};
 use crate::catalog::schema::Schema;
 use crate::common::{PageNo, TableId, INVALID_PAGE_NO, PAGE_SIZE};
-use crate::concurrency::{Transaction, TransactionId};
+use crate::concurrency::Transaction;
 use crate::storage::common::{PageHeader, TUPLE_SLOT_SIZE};
 use crate::tuple::Tuple;
 
@@ -60,10 +60,11 @@ impl<'a> HeapTupleIterator<'a> {
 
                 let tuple_data = &(&data)[offset as usize..];
                 let header = parse_heap_tuple_header(tuple_data, &self.table.schema);
-                if self
-                    .transaction
-                    .is_tuple_visible(header.insert_tid(), header.delete_tid())?
-                {
+                if self.transaction.is_tuple_visible(
+                    header.insert_tid(),
+                    header.command_id(),
+                    header.delete_tid(),
+                )? {
                     let tuple =
                         parse_heap_tuple(&(&data)[offset as usize..], &header, &self.table.schema);
                     return Ok(Some(tuple));
@@ -85,14 +86,19 @@ fn insert_tuple(
     buffer: &mut [u8],
     tuple_size: u16,
     tuple: &Tuple,
-    insert_tid: TransactionId,
+    transaction: &Transaction,
 ) -> bool {
     let mut header = PageHeader::parse(buffer);
     if header.free_space() < tuple_size + TUPLE_SLOT_SIZE {
         return false;
     }
     let tuple_start = header.add_tuple_slot(buffer, tuple_size);
-    serialize_heap_tuple(&mut buffer[tuple_start as usize..], tuple, insert_tid);
+    serialize_heap_tuple(
+        &mut buffer[tuple_start as usize..],
+        tuple,
+        transaction.tid(),
+        transaction.command_id(),
+    );
     header.serialize(buffer);
 
     true
@@ -140,7 +146,7 @@ impl<'a> Table<'a> {
         }
     }
 
-    pub fn insert_tuple(&self, tuple: &Tuple, insert_tid: TransactionId) -> Result<()> {
+    pub fn insert_tuple(&self, tuple: &Tuple, transaction: &Transaction) -> Result<()> {
         let required_size = required_free_space(tuple);
         if required_size >= MAX_TUPLE_SIZE {
             return Err(Error::msg(format!(
@@ -157,7 +163,7 @@ impl<'a> Table<'a> {
 
         loop {
             let mut data = buffer.write();
-            if insert_tuple(data.deref_mut(), required_size, tuple, insert_tid) {
+            if insert_tuple(data.deref_mut(), required_size, tuple, transaction) {
                 buffer.mark_dirty();
                 return Ok(());
             } else {
@@ -229,7 +235,7 @@ mod tests {
 
         let transaction = transaction_manager.start_transaction().unwrap();
         for tuple in &tuples {
-            table.insert_tuple(tuple, transaction.tid())?;
+            table.insert_tuple(tuple, &transaction)?;
         }
         transaction.commit()?;
 

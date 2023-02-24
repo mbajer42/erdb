@@ -1,5 +1,5 @@
 use crate::common::MAX_COLUMNS;
-use crate::concurrency::TransactionId;
+use crate::concurrency::{CommandId, TransactionId};
 use crate::storage::common::{Deserializer, Serializer};
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
@@ -12,6 +12,9 @@ pub struct HeapTupleHeader {
     /// the id of the transaction which deleted/updated this tuple.
     /// Set to 0 if it has not been deleted/updated
     delete_tid: TransactionId,
+    /// how many commands were run before this tuple was created by a transaction
+    /// a transaction can only see tuples from previous commands, not from current ones
+    command_id: CommandId,
     flags: u8,
     user_data_start: u8,
     /// a bitmap, where a bit is set if the value is NULL
@@ -38,15 +41,17 @@ impl HeapTupleHeader {
     // Currently, it consists of:
     // 1. insert_tid (4 bytes)
     // 2. delete_tid (4 bytes)
-    // 3. flags (1 byte)
-    // 4. user_data_start (1 byte)
-    const CONSTANT_SIZE: usize = 10;
+    // 3. command_id (1 byte)
+    // 4. flags (1 byte)
+    // 5. user_data_start (1 byte)
+    const CONSTANT_SIZE: usize = 11;
 
     pub fn from_bytes(bytes: &[u8], column_count: u8) -> Self {
         let mut deserializer = Deserializer::new(bytes);
 
         let insert_tid = deserializer.deserialize_u32();
         let delete_tid = deserializer.deserialize_u32();
+        let command_id = deserializer.deserialize_u8();
         let flags = deserializer.deserialize_u8();
         let user_data_start = deserializer.deserialize_u8();
 
@@ -58,6 +63,7 @@ impl HeapTupleHeader {
         Self {
             insert_tid,
             delete_tid,
+            command_id,
             flags,
             user_data_start,
             null_bitmap,
@@ -65,7 +71,7 @@ impl HeapTupleHeader {
         }
     }
 
-    pub fn new_tuple(tuple: &Tuple, insert_tid: TransactionId) -> Self {
+    pub fn new_tuple(tuple: &Tuple, insert_tid: TransactionId, command_id: u8) -> Self {
         let mut flags = 0;
         let mut null_bitmap = [0u8; MAX_NULL_BITS_SIZE];
         for (column, value) in tuple.values().iter().enumerate() {
@@ -83,6 +89,7 @@ impl HeapTupleHeader {
         Self {
             insert_tid,
             delete_tid: 0,
+            command_id,
             flags,
             user_data_start,
             null_bitmap,
@@ -98,11 +105,16 @@ impl HeapTupleHeader {
         self.delete_tid
     }
 
+    pub fn command_id(&self) -> CommandId {
+        self.command_id
+    }
+
     /// Serializes the header to a buffer
     pub fn serialize(&self, buffer: &mut [u8]) {
         let mut serializer = Serializer::new(buffer);
         serializer.serialize_u32(self.insert_tid);
         serializer.serialize_u32(self.delete_tid);
+        serializer.serialize_u8(self.command_id);
         serializer.serialize_u8(self.flags);
         serializer.serialize_u8(self.user_data_start);
 
