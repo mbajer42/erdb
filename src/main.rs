@@ -15,10 +15,11 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::thread;
 
 use analyzer::Analyzer;
-use anyhow::{Context, Result};
+use anyhow::{Context, Error, Result};
 use buffer::buffer_manager::BufferManager;
 use catalog::Catalog;
 use clap::{Arg, Command, Parser};
+use concurrency::Transaction;
 use executors::ExecutorFactory;
 use parser::ast::Statement;
 use parser::parse_sql;
@@ -112,29 +113,77 @@ fn handle_metacommand(
     Ok(false)
 }
 
-fn handle_sql_statement(
+fn get_transaction<'a, 'b>(
+    transaction_manager: &'a TransactionManager<'a>,
+    transaction: &'b mut Option<Transaction<'a>>,
+) -> Result<&'b mut Transaction<'a>> {
+    let current = transaction.take();
+    let current = if let Some(mut current) = current {
+        if current.has_ended() {
+            transaction.insert(transaction_manager.start_implicit_transaction()?)
+        } else if current.is_rollback_expected() {
+            return Err(Error::msg("An error has occurred. Rollback the transaction first before running any other statements."));
+        } else {
+            transaction_manager.refresh_transaction(&mut current)?;
+            transaction.insert(current)
+        }
+    } else {
+        transaction.insert(transaction_manager.start_implicit_transaction()?)
+    };
+    Ok(current)
+}
+
+fn handle_sql_statement<'a, 'b>(
     writer: &mut BufWriter<&TcpStream>,
     sql: &str,
     buffer_manager: &BufferManager,
-    transaction_manager: &TransactionManager,
+    transaction_manager: &'a TransactionManager<'a>,
     catalog: &Catalog,
+    transaction: &'b mut Option<Transaction<'a>>,
 ) -> Result<()> {
     let statement = parse_sql(sql)?;
     match statement {
         Statement::CreateTable { name, columns } => {
             let columns = columns.into_iter().map(|col| col.into()).collect();
-            let transaction = transaction_manager.start_transaction()?;
-            catalog.create_table(&name, columns, &transaction)?;
-            transaction.commit()?;
+            let transaction = get_transaction(transaction_manager, transaction)?;
+            catalog.create_table(&name, columns, transaction)?;
+            if transaction.auto_commit() {
+                transaction.commit()?;
+            }
             writer.write_all("Table created".as_bytes())?;
+        }
+        Statement::StartTransaction => {
+            if let Some(transaction) = transaction {
+                if !transaction.has_ended() && !transaction.auto_commit() {
+                    return Err(Error::msg("A transaction is already in progress. Commit or abort it first. Nested transactions are not supported."));
+                }
+            }
+            let new_transaction = transaction_manager
+                .start_transaction()
+                .with_context(|| "Could not start transaction")?;
+            *transaction = Some(new_transaction);
+        }
+        Statement::Commit => {
+            if let Some(transaction) = transaction {
+                transaction.commit()?;
+            } else {
+                return Err(Error::msg("No transaction is currently in progress."));
+            }
+        }
+        Statement::Rollback => {
+            if let Some(transaction) = transaction {
+                transaction.abort()?;
+            } else {
+                return Err(Error::msg("No transaction is currently in progress."));
+            }
         }
         query => {
             let analyzer = Analyzer::new(catalog);
             let query = analyzer.analyze(query)?;
             let planner = Planner::new();
             let plan = planner.prepare_logical_plan(query)?;
-            let transaction = transaction_manager.start_transaction()?;
-            let mut executor_factory = ExecutorFactory::new(buffer_manager, &transaction);
+            let transaction = get_transaction(transaction_manager, transaction)?;
+            let mut executor_factory = ExecutorFactory::new(buffer_manager, transaction);
             let executor = executor_factory.create_executor(plan)?;
             let mut printer = Printer::new(executor);
             printer.print_all_tuples(writer)?;
@@ -157,6 +206,7 @@ fn handle_client(
     let mut writer = BufWriter::new(&stream);
     let mut line = String::new();
     let mut statement = String::new();
+    let mut transaction = None;
 
     loop {
         line.clear();
@@ -184,6 +234,7 @@ fn handle_client(
                     buffer_manager,
                     transaction_manager,
                     catalog,
+                    &mut transaction,
                 ) {
                     Ok(()) => (),
                     Err(e) => {

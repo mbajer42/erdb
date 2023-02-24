@@ -54,16 +54,38 @@ impl Parser {
     }
 
     fn parse_statement(&mut self) -> Result<Statement> {
-        match self.next_token() {
+        let statement = match self.next_token() {
             Token::Keyword(keyword) => match keyword {
-                Keyword::Create => self.parse_create_statement(),
-                Keyword::Select => Ok(Statement::Select(self.parse_select_statement()?)),
-                Keyword::Values => Ok(Statement::Select(self.parse_values()?)),
-                Keyword::Insert => self.parse_insert(),
+                Keyword::Create => self.parse_create_statement()?,
+                Keyword::Select => Statement::Select(self.parse_select_statement()?),
+                Keyword::Values => Statement::Select(self.parse_values()?),
+                Keyword::Insert => self.parse_insert()?,
+                Keyword::Start => self.parse_start_transaction()?,
+                Keyword::Commit => Statement::Commit,
+                Keyword::Rollback => Statement::Rollback,
                 found => self.wrong_keyword("a statement", found)?,
             },
             found => self.wrong_token("a statement", found)?,
+        };
+
+        self.expect_end()?;
+        Ok(statement)
+    }
+
+    fn expect_end(&mut self) -> Result<()> {
+        if self.peek_token() == &Token::Semicolon {
+            self.next_token();
         }
+
+        match self.next_token() {
+            Token::End => Ok(()),
+            found => self.wrong_token("end of statement", found),
+        }
+    }
+
+    fn parse_start_transaction(&mut self) -> Result<Statement> {
+        self.expect(Token::Keyword(Keyword::Transaction))?;
+        Ok(Statement::StartTransaction)
     }
 
     fn parse_insert(&mut self) -> Result<Statement> {

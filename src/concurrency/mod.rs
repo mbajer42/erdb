@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::RwLock;
@@ -21,6 +22,20 @@ pub enum TransactionStatus {
     Committed = 0b11,
 }
 
+/// Describes how a transaction ended
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum TransactionEnd {
+    /// transaction is still in progress
+    None,
+    /// transaction has been committed
+    Committed,
+    /// transaction has been aborted
+    Aborted,
+    /// an error occurred and the transaction cannot complete.
+    /// a `ROLLBACK` statement from the user is expected
+    ExpectedRollback,
+}
+
 impl From<u8> for TransactionStatus {
     fn from(value: u8) -> Self {
         match value {
@@ -40,6 +55,10 @@ pub struct Transaction<'a> {
     tid_max: TransactionId,
     /// how many commands were run so far
     command_id: CommandId,
+    /// whether this transaction should automatically commit.
+    /// this is true for implicit transactions
+    auto_commit: bool,
+    end: Cell<TransactionEnd>,
     alive_tids: HashSet<TransactionId>,
     manager: &'a TransactionManager<'a>,
 }
@@ -56,11 +75,55 @@ impl<'a> Transaction<'a> {
     }
 
     pub fn commit(&self) -> Result<()> {
-        self.manager.commit(self.tid)
+        match self.end.get() {
+            TransactionEnd::None => {
+                self.manager.commit(self.tid)?;
+                self.end.set(TransactionEnd::Committed);
+                Ok(())
+            }
+            TransactionEnd::Committed => Err(Error::msg("Transaction already committed")),
+            TransactionEnd::Aborted => {
+                Err(Error::msg("Cannot commit an already aborted transaction"))
+            }
+            TransactionEnd::ExpectedRollback => Err(Error::msg(
+                "An error occurred and the transaction cannot be committed. A rollback is expected",
+            )),
+        }
     }
 
     pub fn abort(&self) -> Result<()> {
-        self.manager.abort(self.tid)
+        match self.end.get() {
+            TransactionEnd::None | TransactionEnd::ExpectedRollback => {
+                self.manager.abort(self.tid)?;
+                self.end.set(TransactionEnd::Aborted);
+                Ok(())
+            }
+            TransactionEnd::Committed => {
+                Err(Error::msg("Cannot commit an already aborted transaction"))
+            }
+            TransactionEnd::Aborted => Err(Error::msg("Transaction already aborted")),
+        }
+    }
+
+    /// An error occurred somewhere. Mark this transaction that an explicit rollback is required.
+    pub fn expect_rollback(&self) {
+        self.end.set(TransactionEnd::ExpectedRollback);
+    }
+
+    pub fn is_rollback_expected(&self) -> bool {
+        self.end.get() == TransactionEnd::ExpectedRollback
+    }
+
+    pub fn auto_commit(&self) -> bool {
+        self.auto_commit
+    }
+
+    /// Returns whether the transaction has already been ended (either by commit or rollback)
+    pub fn has_ended(&self) -> bool {
+        match self.end.get() {
+            TransactionEnd::None | TransactionEnd::ExpectedRollback => false,
+            TransactionEnd::Committed | TransactionEnd::Aborted => true,
+        }
     }
 
     pub fn is_tuple_visible(
@@ -80,7 +143,7 @@ impl<'a> Transaction<'a> {
             // by an earlier command
             TransactionStatus::InProgress => {
                 if tuple_min_tid == self.tid {
-                    Ok(tuple_max_tid == INVALID_TRANSACTION_ID && self.command_id < command_id)
+                    Ok(tuple_max_tid == INVALID_TRANSACTION_ID && self.command_id > command_id)
                 } else {
                     Ok(false)
                 }
@@ -143,6 +206,26 @@ impl<'a> TransactionManager<'a> {
     }
 
     pub fn start_transaction(&'a self) -> Result<Transaction<'a>> {
+        self.create_transaction(false)
+    }
+
+    pub fn start_implicit_transaction(&'a self) -> Result<Transaction<'a>> {
+        self.create_transaction(true)
+    }
+
+    pub fn refresh_transaction(&self, transaction: &mut Transaction) -> Result<()> {
+        let alive_tids = self.alive_tids.read().unwrap();
+        transaction.alive_tids = alive_tids.clone();
+        transaction.tid_max = self.next_tid.load(Ordering::Relaxed);
+        if transaction.command_id == u8::MAX {
+            Err(Error::msg(format!("It's currently not possible to run more than {} statements in a single transaction", u8::MAX)))
+        } else {
+            transaction.command_id += 1;
+            Ok(())
+        }
+    }
+
+    fn create_transaction(&'a self, auto_commit: bool) -> Result<Transaction<'a>> {
         let tid = self
             .next_tid
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |val| {
@@ -166,6 +249,8 @@ impl<'a> TransactionManager<'a> {
             tid,
             tid_max,
             command_id: 0,
+            auto_commit,
+            end: Cell::new(TransactionEnd::None),
             alive_tids: alive_tids.clone(),
             manager: self,
         })
@@ -178,6 +263,8 @@ impl<'a> TransactionManager<'a> {
             tid: BOOTSTRAP_TRANSACTION_ID,
             tid_max: TransactionId::MAX,
             command_id: 0,
+            auto_commit: false,
+            end: Cell::new(TransactionEnd::None),
             alive_tids: HashSet::new(),
             manager: self,
         }

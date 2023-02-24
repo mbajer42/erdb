@@ -163,6 +163,9 @@ pub enum Statement {
         into: TableNode,
         select: SelectStatement,
     },
+    StartTransaction,
+    Commit,
+    Rollback,
 }
 
 #[derive(Debug, PartialEq)]

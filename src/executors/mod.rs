@@ -171,9 +171,9 @@ mod tests {
     use super::ExecutorFactory;
     use crate::analyzer::Analyzer;
     use crate::buffer::buffer_manager::BufferManager;
-    use crate::catalog::schema::ColumnDefinition;
+    use crate::catalog::schema::{ColumnDefinition, TypeId};
     use crate::catalog::Catalog;
-    use crate::concurrency::TransactionManager;
+    use crate::concurrency::{Transaction, TransactionManager};
     use crate::parser::parse_sql;
     use crate::planner::Planner;
     use crate::storage::file_manager::FileManager;
@@ -225,14 +225,26 @@ mod tests {
             transaction.commit()
         }
 
+        pub fn start_transaction(&'a self) -> Result<Transaction<'a>> {
+            self.transaction_manager.start_transaction()
+        }
+
         pub fn execute_query(&self, sql: &str) -> Result<Vec<Tuple>> {
+            let transaction = self.transaction_manager.start_implicit_transaction()?;
+            self.execute_query_with_transaction(sql, &transaction)
+        }
+
+        pub fn execute_query_with_transaction(
+            &self,
+            sql: &str,
+            transaction: &Transaction,
+        ) -> Result<Vec<Tuple>> {
             let query = parse_sql(sql)?;
             let analyzer = Analyzer::new(&self.catalog);
             let query = analyzer.analyze(query)?;
             let planner = Planner::new();
             let plan = planner.prepare_logical_plan(query)?;
-            let transaction = self.transaction_manager.start_transaction()?;
-            let mut executor_factory = ExecutorFactory::new(self.buffer_manager, &transaction);
+            let mut executor_factory = ExecutorFactory::new(self.buffer_manager, transaction);
             let mut executor = executor_factory.create_executor(plan)?;
             let mut tuples = vec![];
             while let Some(tuple) = executor.next().transpose()? {
@@ -240,5 +252,40 @@ mod tests {
             }
             Ok(tuples)
         }
+    }
+
+    #[test]
+    fn can_only_see_committed_tuples() {
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        execution_test_context
+            .create_table(
+                "numbers",
+                vec![ColumnDefinition::new(
+                    TypeId::Integer,
+                    "number".to_owned(),
+                    0,
+                    true,
+                )],
+            )
+            .unwrap();
+
+        let insert_transaction = execution_test_context.start_transaction().unwrap();
+        let insert_statement = "insert into numbers values (1), (2), (3)";
+        execution_test_context
+            .execute_query_with_transaction(insert_statement, &insert_transaction)
+            .unwrap();
+
+        let select_numbers = "select * from numbers";
+        let tuples = execution_test_context
+            .execute_query(select_numbers)
+            .unwrap();
+        assert!(tuples.is_empty());
+
+        insert_transaction.commit().unwrap();
+        let tuples = execution_test_context
+            .execute_query(select_numbers)
+            .unwrap();
+        assert_eq!(tuples.len(), 3);
     }
 }

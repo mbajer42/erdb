@@ -39,16 +39,34 @@ impl<'a> InsertExecutor<'a> {
         }
     }
 
+    fn try_insert(&mut self) -> Result<()> {
+        while let Some(tuple) = self.child.next().transpose()? {
+            self.table.insert_tuple(&tuple, self.transaction)?;
+            self.tuples_inserted += 1;
+        }
+        Ok(())
+    }
+
     fn next(&mut self) -> Result<Option<Tuple>> {
         if self.done {
             Ok(None)
         } else {
             self.done = true;
-            while let Some(tuple) = self.child.next().transpose()? {
-                self.table.insert_tuple(&tuple, self.transaction)?;
-                self.tuples_inserted += 1;
-            }
-            self.transaction.commit()?;
+            match self.try_insert() {
+                Err(e) => {
+                    if self.transaction.auto_commit() {
+                        self.transaction.abort()?;
+                    } else {
+                        self.transaction.expect_rollback();
+                    }
+                    return Err(e);
+                }
+                Ok(()) => {
+                    if self.transaction.auto_commit() {
+                        self.transaction.commit()?;
+                    }
+                }
+            };
             Ok(Some(Tuple::new(vec![Value::Integer(self.tuples_inserted)])))
         }
     }
