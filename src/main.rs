@@ -162,6 +162,7 @@ fn handle_sql_statement<'a, 'b>(
                 .start_transaction()
                 .with_context(|| "Could not start transaction")?;
             *transaction = Some(new_transaction);
+            writer.write_all("transaction started".as_bytes())?;
         }
         Statement::Commit => {
             if let Some(transaction) = transaction {
