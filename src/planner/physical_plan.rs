@@ -65,20 +65,20 @@ pub enum PhysicalPlan {
         child: Box<PhysicalPlan>,
         output_schema: Schema,
     },
-    ValuesPlan {
+    Values {
         values: Vec<Vec<Expr>>,
         output_schema: Schema,
     },
-    InsertPlan {
+    Insert {
         target: TableId,
         target_schema: Schema,
         child: Box<PhysicalPlan>,
     },
-    FilterPlan {
+    Filter {
         filter: Expr,
         child: Box<PhysicalPlan>,
     },
-    Join {
+    NestedLoopJoin {
         left: Box<PhysicalPlan>,
         right: Box<PhysicalPlan>,
         join_type: JoinType,
@@ -99,17 +99,17 @@ impl PhysicalPlan {
                 child: _,
                 output_schema,
             } => output_schema,
-            Self::ValuesPlan {
+            Self::Values {
                 values: _,
                 output_schema,
             } => output_schema,
-            Self::InsertPlan {
+            Self::Insert {
                 target: _,
                 target_schema: _,
                 child: _,
             } => unreachable!(),
-            Self::FilterPlan { filter: _, child } => child.schema(),
-            Self::Join {
+            Self::Filter { filter: _, child } => child.schema(),
+            Self::NestedLoopJoin {
                 left: _,
                 right: _,
                 join_type: _,

@@ -55,7 +55,7 @@ impl<'a> ExecutorFactory<'a> {
                 table_id,
                 output_schema,
             } => (*table_id, output_schema.clone()),
-            PhysicalPlan::Join {
+            PhysicalPlan::NestedLoopJoin {
                 left,
                 right,
                 join_type: _,
@@ -66,7 +66,7 @@ impl<'a> ExecutorFactory<'a> {
                 self.insert_tables(right);
                 return;
             }
-            PhysicalPlan::InsertPlan {
+            PhysicalPlan::Insert {
                 target,
                 target_schema,
                 child,
@@ -79,7 +79,7 @@ impl<'a> ExecutorFactory<'a> {
                 child,
                 output_schema: _,
             } => return self.insert_tables(child),
-            PhysicalPlan::FilterPlan { filter: _, child } => return self.insert_tables(child),
+            PhysicalPlan::Filter { filter: _, child } => return self.insert_tables(child),
             _ => return,
         };
 
@@ -92,7 +92,7 @@ impl<'a> ExecutorFactory<'a> {
                 table_id,
                 output_schema: _,
             } => Ok(Box::new(self.create_seq_scan_executor(table_id)?)),
-            PhysicalPlan::Join {
+            PhysicalPlan::NestedLoopJoin {
                 left,
                 right,
                 join_type,
@@ -122,11 +122,11 @@ impl<'a> ExecutorFactory<'a> {
                     output_schema,
                 )))
             }
-            PhysicalPlan::ValuesPlan {
+            PhysicalPlan::Values {
                 values,
                 output_schema,
             } => Ok(Box::new(ValuesExecutor::new(values, output_schema))),
-            PhysicalPlan::InsertPlan {
+            PhysicalPlan::Insert {
                 target,
                 child,
                 target_schema: _,
@@ -139,7 +139,7 @@ impl<'a> ExecutorFactory<'a> {
                     self.transaction,
                 )))
             }
-            PhysicalPlan::FilterPlan { filter, child } => {
+            PhysicalPlan::Filter { filter, child } => {
                 let child = self.create_executor_internal(*child)?;
                 Ok(Box::new(FilterExecutor::new(child, filter)))
             }

@@ -25,7 +25,7 @@ impl Planner {
                 target_schema,
             } => {
                 let plan = self.plan_query(query)?;
-                Ok(PhysicalPlan::InsertPlan {
+                Ok(PhysicalPlan::Insert {
                     target,
                     target_schema,
                     child: Box::new(plan),
@@ -44,7 +44,7 @@ impl Planner {
         } = query;
 
         if !values.is_empty() {
-            Ok(PhysicalPlan::ValuesPlan {
+            Ok(PhysicalPlan::Values {
                 values: values
                     .into_iter()
                     .map(|values| self.plan_expressions(values, &[]))
@@ -65,7 +65,7 @@ impl Planner {
         child: PhysicalPlan,
     ) -> Result<PhysicalPlan> {
         if let Some(filter) = filter {
-            Ok(PhysicalPlan::FilterPlan {
+            Ok(PhysicalPlan::Filter {
                 filter: self.plan_expression(filter, &[&child])?,
                 child: Box::new(child),
             })
@@ -103,7 +103,7 @@ impl Planner {
                 left_columns.append(&mut right_columns);
                 let output_schema = Schema::new(left_columns);
 
-                PhysicalPlan::Join {
+                PhysicalPlan::NestedLoopJoin {
                     left: Box::new(left_child),
                     right: Box::new(right_child),
                     join_type,
@@ -111,7 +111,7 @@ impl Planner {
                     output_schema,
                 }
             }
-            TableReference::EmptyTable => PhysicalPlan::ValuesPlan {
+            TableReference::EmptyTable => PhysicalPlan::Values {
                 values: vec![vec![]],
                 output_schema: EMPTY_SCHEMA.clone(),
             },
