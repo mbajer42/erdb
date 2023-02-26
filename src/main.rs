@@ -27,6 +27,7 @@ use planner::Planner;
 use printer::Printer;
 use storage::file_manager::FileManager;
 
+use crate::concurrency::lock_manager::LockManager;
 use crate::concurrency::TransactionManager;
 
 #[derive(Parser)]
@@ -263,7 +264,8 @@ fn main() -> Result<()> {
 
     let file_manager = FileManager::new(config.data)?;
     let buffer_manager = BufferManager::new(file_manager, config.pool_size);
-    let transaction_manager = TransactionManager::new(&buffer_manager, config.new)
+    let lock_manager = LockManager::new();
+    let transaction_manager = TransactionManager::new(&buffer_manager, &lock_manager, config.new)
         .with_context(|| "Failed to create transaction manager")?;
     let bootstrap_transaction = transaction_manager.bootstrap();
 

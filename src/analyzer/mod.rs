@@ -568,6 +568,7 @@ mod tests {
     use crate::buffer::buffer_manager::BufferManager;
     use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::catalog::Catalog;
+    use crate::concurrency::lock_manager::LockManager;
     use crate::concurrency::TransactionManager;
     use crate::parser::ast::{BinaryOperator, UnaryOperator};
     use crate::parser::parse_sql;
@@ -578,7 +579,9 @@ mod tests {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let lock_manager = LockManager::new();
+        let transaction_manager =
+            TransactionManager::new(&buffer_manager, &lock_manager, true).unwrap();
         let bootstrap_transaction = transaction_manager.bootstrap();
 
         let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction).unwrap();
@@ -627,7 +630,9 @@ mod tests {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let lock_manager = LockManager::new();
+        let transaction_manager =
+            TransactionManager::new(&buffer_manager, &lock_manager, true).unwrap();
         let bootstrap_transaction = transaction_manager.bootstrap();
 
         let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction).unwrap();
@@ -676,7 +681,9 @@ mod tests {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let lock_manager = LockManager::new();
+        let transaction_manager =
+            TransactionManager::new(&buffer_manager, &lock_manager, true).unwrap();
         let bootstrap_transaction = transaction_manager.bootstrap();
 
         let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction).unwrap();
@@ -750,7 +757,9 @@ mod tests {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let lock_manager = LockManager::new();
+        let transaction_manager =
+            TransactionManager::new(&buffer_manager, &lock_manager, true).unwrap();
         let bootstrap_transaction = transaction_manager.bootstrap();
 
         let sql = "

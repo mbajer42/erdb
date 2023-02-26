@@ -5,8 +5,11 @@ use std::sync::RwLock;
 
 use anyhow::{Context, Error, Result};
 
+use self::lock_manager::LockManager;
 use crate::buffer::buffer_manager::{BufferGuard, BufferManager};
 use crate::common::{INVALID_PAGE_NO, PAGE_SIZE, TRANSACTION_LOG_TABLE_ID};
+
+pub mod lock_manager;
 
 pub type CommandId = u8;
 pub type TransactionId = u32;
@@ -79,6 +82,7 @@ impl<'a> Transaction<'a> {
             TransactionEnd::None => {
                 self.manager.commit(self.tid)?;
                 self.end.set(TransactionEnd::Committed);
+                self.manager.lock_manager.end_transaction(self.tid);
                 Ok(())
             }
             TransactionEnd::Committed => Err(Error::msg("Transaction already committed")),
@@ -96,6 +100,7 @@ impl<'a> Transaction<'a> {
             TransactionEnd::None | TransactionEnd::ExpectedRollback => {
                 self.manager.abort(self.tid)?;
                 self.end.set(TransactionEnd::Aborted);
+                self.manager.lock_manager.end_transaction(self.tid);
                 Ok(())
             }
             TransactionEnd::Committed => {
@@ -181,14 +186,20 @@ impl<'a> Transaction<'a> {
 
 pub struct TransactionManager<'a> {
     buffer_manager: &'a BufferManager,
+    lock_manager: &'a LockManager,
     next_tid: AtomicU32,
     alive_tids: RwLock<HashSet<TransactionId>>,
 }
 
 impl<'a> TransactionManager<'a> {
-    pub fn new(buffer_manager: &'a BufferManager, bootstrap: bool) -> Result<Self> {
+    pub fn new(
+        buffer_manager: &'a BufferManager,
+        lock_manager: &'a LockManager,
+        bootstrap: bool,
+    ) -> Result<Self> {
         let this = Self {
             buffer_manager,
+            lock_manager,
             next_tid: AtomicU32::new(2),
             alive_tids: RwLock::new(HashSet::new()),
         };
@@ -245,6 +256,7 @@ impl<'a> TransactionManager<'a> {
         let mut alive_tids = self.alive_tids.write().unwrap();
         alive_tids.insert(tid);
 
+        self.lock_manager.start_transaction(tid);
         Ok(Transaction {
             tid,
             tid_max,
@@ -259,6 +271,8 @@ impl<'a> TransactionManager<'a> {
     /// Starts a transaction which can be used by other parts to complete bootstrap process.
     /// Should be used only during bootstrap process
     pub fn bootstrap(&'a self) -> Transaction<'a> {
+        self.lock_manager
+            .start_transaction(BOOTSTRAP_TRANSACTION_ID);
         Transaction {
             tid: BOOTSTRAP_TRANSACTION_ID,
             tid_max: TransactionId::MAX,
@@ -388,6 +402,7 @@ mod tests {
     use super::TransactionManager;
     use crate::buffer::buffer_manager::BufferManager;
     use crate::common::PAGE_SIZE;
+    use crate::concurrency::lock_manager::LockManager;
     use crate::concurrency::TransactionStatus;
     use crate::storage::file_manager::FileManager;
 
@@ -396,7 +411,9 @@ mod tests {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let lock_manager = LockManager::new();
+        let transaction_manager =
+            TransactionManager::new(&buffer_manager, &lock_manager, true).unwrap();
 
         let t1 = transaction_manager.start_transaction().unwrap();
         assert_eq!(t1.tid, 2);
@@ -432,7 +449,8 @@ mod tests {
             }
         }
 
-        let transaction_manager = TransactionManager::new(&buffer_manager, false).unwrap();
+        let transaction_manager =
+            TransactionManager::new(&buffer_manager, &lock_manager, false).unwrap();
         transaction_manager.load_transaction_log().unwrap();
 
         for tid in 4..=(4 * PAGE_SIZE + 3) {

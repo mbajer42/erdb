@@ -173,6 +173,7 @@ mod tests {
     use crate::buffer::buffer_manager::BufferManager;
     use crate::catalog::schema::{ColumnDefinition, TypeId};
     use crate::catalog::Catalog;
+    use crate::concurrency::lock_manager::LockManager;
     use crate::concurrency::{Transaction, TransactionManager};
     use crate::parser::parse_sql;
     use crate::planner::Planner;
@@ -183,6 +184,7 @@ mod tests {
     pub struct EmptyTestContext {
         data_dir: TempDir,
         buffer_manager: BufferManager,
+        lock_manager: LockManager,
     }
 
     impl EmptyTestContext {
@@ -193,6 +195,7 @@ mod tests {
             Self {
                 data_dir,
                 buffer_manager,
+                lock_manager: LockManager::new(),
             }
         }
     }
@@ -206,10 +209,13 @@ mod tests {
     impl<'a> ExecutionTestContext<'a> {
         pub fn new(context: &'a EmptyTestContext) -> Self {
             let buffer_manager = &context.buffer_manager;
-            let transaction_manager = TransactionManager::new(buffer_manager, true).unwrap();
+            let lock_manager = &context.lock_manager;
+            let transaction_manager =
+                TransactionManager::new(buffer_manager, lock_manager, true).unwrap();
             let bootstrap_transaction = transaction_manager.bootstrap();
             let catalog = Catalog::new(buffer_manager, true, &bootstrap_transaction).unwrap();
             bootstrap_transaction.commit().unwrap();
+            drop(bootstrap_transaction);
 
             Self {
                 buffer_manager,
