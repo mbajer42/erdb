@@ -163,6 +163,10 @@ pub enum Statement {
         into: TableNode,
         select: SelectStatement,
     },
+    Delete {
+        from: TableNode,
+        filter: Option<ExprNode>,
+    },
     StartTransaction,
     Commit,
     Rollback,

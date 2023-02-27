@@ -27,9 +27,36 @@ impl<'a> Analyzer<'a> {
     pub fn analyze(&self, query: ast::Statement) -> Result<LogicalPlan> {
         match query {
             Statement::Select(select) => Ok(LogicalPlan::Select(self.analyze_select(select)?)),
+            Statement::Delete { from, filter } => self.analyze_delete(from, filter),
             Statement::Insert { into, select } => self.analyze_insert(into, select),
             _ => unreachable!(),
         }
+    }
+
+    fn analyze_delete(
+        &self,
+        from: ast::TableNode,
+        filter: Option<ExprNode>,
+    ) -> Result<LogicalPlan> {
+        let table = self.analyze_table(from)?;
+
+        let filter = if let Some(filter_expr) = filter {
+            let (expr, col_def) = Self::analyze_expression(filter_expr, &table)?;
+            if col_def.type_id != TypeId::Unknown && col_def.type_id != TypeId::Boolean {
+                return Err(Error::msg(format!(
+                    "WHERE condition must evaluate to boolean, but evaluates to {}",
+                    col_def.type_id
+                )));
+            }
+            Some(expr)
+        } else {
+            None
+        };
+
+        Ok(LogicalPlan::Delete {
+            from: table,
+            filter,
+        })
     }
 
     fn analyze_insert(&self, into: ast::TableNode, select: SelectStatement) -> Result<LogicalPlan> {

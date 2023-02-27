@@ -113,8 +113,9 @@ impl<'a> HeapTupleIterator<'a> {
                     header.command_id,
                     header.delete_tid,
                 )? {
-                    let tuple =
+                    let mut tuple =
                         parse_heap_tuple(&(&data)[offset as usize..], &header, &self.table.schema);
+                    tuple.tuple_id = (self.curr_page_no, self.curr_slot - 1);
                     return Ok(Some(tuple));
                 }
             }
@@ -262,6 +263,7 @@ impl<'a> Table<'a> {
                                 .lock_tuple(table_id_tuple_id, LockMode::Exclusive),
                         );
                     }
+                    drop(data);
                     transaction.wait_for_transaction_to_end(header.delete_tid);
 
                     // transaction ended, retry

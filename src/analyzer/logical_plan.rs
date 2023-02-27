@@ -52,6 +52,11 @@ pub enum LogicalPlan {
         target: TableId,
         target_schema: Schema,
     },
+    Delete {
+        from: TableReference,
+        /// WHERE clause
+        filter: Option<LogicalExpr>,
+    },
     Select(Query),
 }
 

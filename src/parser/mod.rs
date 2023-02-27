@@ -60,6 +60,7 @@ impl Parser {
                 Keyword::Select => Statement::Select(self.parse_select_statement()?),
                 Keyword::Values => Statement::Select(self.parse_values()?),
                 Keyword::Insert => self.parse_insert()?,
+                Keyword::Delete => self.parse_delete()?,
                 Keyword::Start => self.parse_start_transaction()?,
                 Keyword::Commit => Statement::Commit,
                 Keyword::Rollback => Statement::Rollback,
@@ -81,6 +82,24 @@ impl Parser {
             Token::End => Ok(()),
             found => self.wrong_token("end of statement", found),
         }
+    }
+
+    fn parse_delete(&mut self) -> Result<Statement> {
+        self.expect(Token::Keyword(Keyword::From))?;
+
+        let table = self.parse_table()?;
+
+        let filter = if self.peek_token() == &Token::Keyword(Keyword::Where) {
+            self.next_token();
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+
+        Ok(Statement::Delete {
+            from: table,
+            filter,
+        })
     }
 
     fn parse_start_transaction(&mut self) -> Result<Statement> {

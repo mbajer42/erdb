@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 
+use self::delete_executor::DeleteExecutor;
 use self::filter_executor::FilterExecutor;
 use self::insert_executor::InsertExecutor;
 use self::nested_loop_join_executor::NestedLoopJoinExecutor;
@@ -16,6 +17,7 @@ use crate::planner::physical_plan::PhysicalPlan;
 use crate::storage::heap::table::Table;
 use crate::tuple::Tuple;
 
+mod delete_executor;
 mod filter_executor;
 mod insert_executor;
 mod nested_loop_join_executor;
@@ -80,6 +82,7 @@ impl<'a> ExecutorFactory<'a> {
                 output_schema: _,
             } => return self.insert_tables(child),
             PhysicalPlan::Filter { filter: _, child } => return self.insert_tables(child),
+            PhysicalPlan::Delete { from: _, child } => return self.insert_tables(child),
             _ => return,
         };
 
@@ -142,6 +145,15 @@ impl<'a> ExecutorFactory<'a> {
             PhysicalPlan::Filter { filter, child } => {
                 let child = self.create_executor_internal(*child)?;
                 Ok(Box::new(FilterExecutor::new(child, filter)))
+            }
+            PhysicalPlan::Delete { from, child } => {
+                let child = self.create_executor_internal(*child)?;
+                let table = self.get_table(from);
+                Ok(Box::new(DeleteExecutor::new(
+                    table,
+                    child,
+                    self.transaction,
+                )))
             }
         }
     }

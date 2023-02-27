@@ -1,9 +1,15 @@
 use self::value::Value;
+use crate::common::INVALID_PAGE_NO;
+use crate::storage::TupleId;
 
 pub mod value;
 
+const INVALID_TUPLE_ID: TupleId = (INVALID_PAGE_NO, 0);
+
 #[derive(Debug, PartialEq)]
 pub struct Tuple {
+    /// the physical location of a tuple in a table (if exists)
+    pub tuple_id: TupleId,
     pub values: Vec<Value>,
     has_null: bool,
 }
@@ -11,7 +17,11 @@ pub struct Tuple {
 impl Tuple {
     pub fn new(values: Vec<Value>) -> Self {
         let has_null = values.iter().any(|val| val.is_null());
-        Self { values, has_null }
+        Self {
+            tuple_id: INVALID_TUPLE_ID,
+            values,
+            has_null,
+        }
     }
 
     pub fn has_null(&self) -> bool {

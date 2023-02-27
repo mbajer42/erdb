@@ -19,6 +19,7 @@ impl Planner {
     pub fn prepare_logical_plan(&self, logical_plan: LogicalPlan) -> Result<PhysicalPlan> {
         match logical_plan {
             LogicalPlan::Select(query) => self.plan_query(query),
+            LogicalPlan::Delete { from, filter } => self.plan_delete(from, filter),
             LogicalPlan::Insert {
                 query,
                 target,
@@ -32,6 +33,28 @@ impl Planner {
                 })
             }
         }
+    }
+
+    fn plan_delete(
+        &self,
+        from: TableReference,
+        filter: Option<LogicalExpr>,
+    ) -> Result<PhysicalPlan> {
+        let table_id = match &from {
+            TableReference::BaseTable {
+                table_id,
+                name: _,
+                schema: _,
+            } => *table_id,
+            _ => unreachable!(),
+        };
+        let child = self.plan_table_reference(from)?;
+        let child = self.plan_filter(filter, child)?;
+
+        Ok(PhysicalPlan::Delete {
+            from: table_id,
+            child: Box::new(child),
+        })
     }
 
     fn plan_query(&self, query: Query) -> Result<PhysicalPlan> {

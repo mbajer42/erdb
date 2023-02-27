@@ -135,8 +135,9 @@ impl LockManager {
 
     fn lock(&self, tag: LockTag, mode: LockMode) -> LockGuard {
         match self.lock_table.entry(tag) {
-            Entry::Occupied(lock) => {
-                let lock = &*lock.get().clone();
+            Entry::Occupied(entry) => {
+                let lock = &*entry.get().clone();
+                drop(entry);
 
                 let mut status = lock.status.lock().unwrap();
                 if status.can_grant(mode) {
@@ -146,6 +147,7 @@ impl LockManager {
                     let (sender, receiver) = channel();
                     let request = LockRequest::new(mode, sender);
                     status.awaiting.push_back(request);
+                    drop(status);
                     _ = receiver.recv();
                 }
             }

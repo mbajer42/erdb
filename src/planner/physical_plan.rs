@@ -74,6 +74,10 @@ pub enum PhysicalPlan {
         target_schema: Schema,
         child: Box<PhysicalPlan>,
     },
+    Delete {
+        from: TableId,
+        child: Box<PhysicalPlan>,
+    },
     Filter {
         filter: Expr,
         child: Box<PhysicalPlan>,
@@ -108,6 +112,7 @@ impl PhysicalPlan {
                 target_schema: _,
                 child: _,
             } => unreachable!(),
+            Self::Delete { from: _, child: _ } => unreachable!(),
             Self::Filter { filter: _, child } => child.schema(),
             Self::NestedLoopJoin {
                 left: _,
