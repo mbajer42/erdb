@@ -9,16 +9,16 @@ const MAX_NULL_BITS_SIZE: usize = (MAX_COLUMNS / 8) as usize;
 
 pub struct HeapTupleHeader {
     /// the id of the transaction which inserted this tuple
-    insert_tid: TransactionId,
+    pub insert_tid: TransactionId,
     /// the id of the transaction which deleted/updated this tuple.
     /// Set to 0 if it has not been deleted/updated
-    delete_tid: TransactionId,
+    pub delete_tid: TransactionId,
     /// how many commands were run before this tuple was created by a transaction
     /// a transaction can only see tuples from previous commands, not from current ones
-    command_id: CommandId,
+    pub command_id: CommandId,
     /// tuple_id points to a new tuple if a new version exists,
     /// otherwise to itself
-    tuple_id: TupleId,
+    pub tuple_id: TupleId,
     flags: u8,
     user_data_start: u8,
     /// a bitmap, where a bit is set if the value is NULL
@@ -108,18 +108,6 @@ impl HeapTupleHeader {
             null_bitmap,
             column_count: tuple.values().len() as u8,
         }
-    }
-
-    pub fn insert_tid(&self) -> TransactionId {
-        self.insert_tid
-    }
-
-    pub fn delete_tid(&self) -> TransactionId {
-        self.delete_tid
-    }
-
-    pub fn command_id(&self) -> CommandId {
-        self.command_id
     }
 
     /// Serializes the header to a buffer

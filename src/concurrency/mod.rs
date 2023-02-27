@@ -5,7 +5,7 @@ use std::sync::RwLock;
 
 use anyhow::{Context, Error, Result};
 
-use self::lock_manager::LockManager;
+use self::lock_manager::{LockManager, LockMode};
 use crate::buffer::buffer_manager::{BufferGuard, BufferManager};
 use crate::common::{INVALID_PAGE_NO, PAGE_SIZE, TRANSACTION_LOG_TABLE_ID};
 
@@ -63,13 +63,21 @@ pub struct Transaction<'a> {
     auto_commit: bool,
     end: Cell<TransactionEnd>,
     alive_tids: HashSet<TransactionId>,
-    manager: &'a TransactionManager<'a>,
+    pub manager: &'a TransactionManager<'a>,
 }
 
 impl<'a> Transaction<'a> {
     /// Returns its own transaction id
     pub fn tid(&self) -> TransactionId {
         self.tid
+    }
+
+    /// Waits for another transaction to end
+    pub fn wait_for_transaction_to_end(&self, other: TransactionId) {
+        let _lock = self
+            .manager
+            .lock_manager
+            .lock_transaction(other, LockMode::Shared);
     }
 
     /// Returns the current command id
@@ -133,50 +141,48 @@ impl<'a> Transaction<'a> {
 
     pub fn is_tuple_visible(
         &self,
-        tuple_min_tid: TransactionId,
+        insert_tid: TransactionId,
         command_id: CommandId,
-        tuple_max_tid: TransactionId,
+        delete_tid: TransactionId,
     ) -> Result<bool> {
-        if tuple_min_tid >= self.tid_max {
+        if insert_tid >= self.tid_max {
             return Ok(false);
         }
 
-        match self.manager.get_transaction_status(tuple_min_tid)? {
+        match self.manager.get_transaction_status(insert_tid)? {
             // invalid or aborted transaction ids are never visible
             TransactionStatus::Invalid | TransactionStatus::Aborted => Ok(false),
             // an in progress transaction id is only visible, if the tuple was inserted by the very same transaction
             // by an earlier command
             TransactionStatus::InProgress => {
-                if tuple_min_tid == self.tid {
-                    Ok(tuple_max_tid == INVALID_TRANSACTION_ID && self.command_id > command_id)
+                if insert_tid == self.tid {
+                    Ok(delete_tid == INVALID_TRANSACTION_ID && self.command_id > command_id)
                 } else {
                     Ok(false)
                 }
             }
             TransactionStatus::Committed => {
-                if self.alive_tids.contains(&tuple_min_tid) {
+                if self.alive_tids.contains(&insert_tid) {
                     // transaction committed, but when this transaction started it was still alive,
                     // hence, not visible
                     Ok(false)
-                } else if tuple_max_tid == INVALID_TRANSACTION_ID || tuple_max_tid >= self.tid_max {
-                    // 1. if there does not exist a newer version of a tuple (tuple_max_tid == INVALID_TRANSACTION_ID),
+                } else if delete_tid == INVALID_TRANSACTION_ID || delete_tid >= self.tid_max {
+                    // 1. if there does not exist a newer version of a tuple (delete_tid == INVALID_TRANSACTION_ID),
                     // then this tuple is visible
                     // 2. if there exists a newer version of a tuple, but regardless of its status,
                     // it won't be visible (as it's outside of the snapshot), so the current tuple is visible
                     Ok(true)
                 } else {
-                    match self.manager.get_transaction_status(tuple_max_tid)? {
+                    match self.manager.get_transaction_status(delete_tid)? {
                         // there is a newer version of this tuple, but its' transaction was aborted, so this tuple is visible
                         TransactionStatus::Invalid | TransactionStatus::Aborted => Ok(true),
                         // the newer version of this tuple is still in progress. If the current transaction inserted the newer version,
                         // then this tuple will not be visible (only the newer one will). If any other transaction inserted the
                         // newer version, then the newer version won't be visible
-                        TransactionStatus::InProgress => Ok(tuple_max_tid != self.tid),
+                        TransactionStatus::InProgress => Ok(delete_tid != self.tid),
                         // newer version is committed, but only visible if the transaction is not marked as in progress for
                         // the current transaction
-                        TransactionStatus::Committed => {
-                            Ok(self.alive_tids.contains(&tuple_max_tid))
-                        }
+                        TransactionStatus::Committed => Ok(self.alive_tids.contains(&delete_tid)),
                     }
                 }
             }
@@ -186,7 +192,7 @@ impl<'a> Transaction<'a> {
 
 pub struct TransactionManager<'a> {
     buffer_manager: &'a BufferManager,
-    lock_manager: &'a LockManager,
+    pub lock_manager: &'a LockManager,
     next_tid: AtomicU32,
     alive_tids: RwLock<HashSet<TransactionId>>,
 }
@@ -333,7 +339,7 @@ impl<'a> TransactionManager<'a> {
         }
     }
 
-    fn get_transaction_status(&self, tid: TransactionId) -> Result<TransactionStatus> {
+    pub fn get_transaction_status(&self, tid: TransactionId) -> Result<TransactionStatus> {
         let alive_tids = self.alive_tids.read().unwrap();
         if alive_tids.contains(&tid) {
             return Ok(TransactionStatus::InProgress);
