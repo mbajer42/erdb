@@ -6,7 +6,8 @@ use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 
 use super::TransactionId;
-use crate::storage::TupleSlot;
+use crate::common::TableId;
+use crate::storage::TupleId;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum LockMode {
@@ -26,7 +27,7 @@ impl LockMode {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 enum LockTag {
     Transaction(TransactionId),
-    Tuple(TupleSlot),
+    Tuple((TableId, TupleId)),
 }
 
 struct LockStatus {
@@ -123,7 +124,7 @@ impl LockManager {
     }
 
     /// Locks a tuple. Waits until the lock can be granted.
-    pub fn lock_tuple(&self, to_lock: TupleSlot, mode: LockMode) -> LockGuard {
+    pub fn lock_tuple(&self, to_lock: (TableId, TupleId), mode: LockMode) -> LockGuard {
         self.lock(LockTag::Tuple(to_lock), mode)
     }
 

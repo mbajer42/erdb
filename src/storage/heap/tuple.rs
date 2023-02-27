@@ -2,7 +2,8 @@ use super::header::HeapTupleHeader;
 use crate::catalog::schema::Schema;
 use crate::common::PAGE_SIZE;
 use crate::concurrency::TransactionId;
-use crate::storage::common::{PageHeader, TUPLE_SLOT_SIZE};
+use crate::storage::utils::{PageHeader, TUPLE_SLOT_SIZE};
+use crate::storage::TupleId;
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
 
@@ -42,8 +43,9 @@ pub fn serialize_heap_tuple(
     tuple: &Tuple,
     insert_tid: TransactionId,
     command_id: u8,
+    tuple_id: TupleId,
 ) {
-    let header = HeapTupleHeader::new_tuple(tuple, insert_tid, command_id);
+    let header = HeapTupleHeader::new_tuple(tuple, insert_tid, command_id, tuple_id);
     let mut user_data_next_value = header.user_data_start();
     for (_column, value) in tuple.values().iter().enumerate() {
         if !value.is_null() {
@@ -84,7 +86,7 @@ mod tests {
             Value::Null,
         ];
         let tuple = Tuple::new(values);
-        serialize_heap_tuple(&mut buffer, &tuple, 0, 0);
+        serialize_heap_tuple(&mut buffer, &tuple, 0, 0, (1, 0));
 
         let header = parse_heap_tuple_header(&buffer, &TEST_SCHEMA);
         let parsed_tuple = parse_heap_tuple(&buffer, &header, &TEST_SCHEMA);

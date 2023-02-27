@@ -11,7 +11,7 @@ use crate::buffer::buffer_manager::{BufferGuard, BufferManager};
 use crate::catalog::schema::Schema;
 use crate::common::{PageNo, TableId, INVALID_PAGE_NO, PAGE_SIZE};
 use crate::concurrency::Transaction;
-use crate::storage::common::{PageHeader, TUPLE_SLOT_SIZE};
+use crate::storage::utils::{PageHeader, TUPLE_SLOT_SIZE};
 use crate::tuple::Tuple;
 
 lazy_static! {
@@ -85,6 +85,7 @@ impl<'a> std::iter::Iterator for HeapTupleIterator<'a> {
 fn insert_tuple(
     buffer: &mut [u8],
     tuple_size: u16,
+    page_no: PageNo,
     tuple: &Tuple,
     transaction: &Transaction,
 ) -> bool {
@@ -92,12 +93,13 @@ fn insert_tuple(
     if header.free_space() < tuple_size + TUPLE_SLOT_SIZE {
         return false;
     }
-    let tuple_start = header.add_tuple_slot(buffer, tuple_size);
+    let (slot, tuple_start) = header.add_tuple_slot(buffer, tuple_size);
     serialize_heap_tuple(
         &mut buffer[tuple_start as usize..],
         tuple,
         transaction.tid(),
         transaction.command_id(),
+        (page_no, slot),
     );
     header.serialize(buffer);
 
@@ -163,7 +165,7 @@ impl<'a> Table<'a> {
 
         loop {
             let mut data = buffer.write();
-            if insert_tuple(data.deref_mut(), required_size, tuple, transaction) {
+            if insert_tuple(data.deref_mut(), required_size, page_no, tuple, transaction) {
                 buffer.mark_dirty();
                 return Ok(());
             } else {

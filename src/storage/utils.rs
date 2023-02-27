@@ -1,13 +1,20 @@
+use super::{Slot, TupleId};
 use crate::common::PAGE_SIZE;
+
+pub type TupleOffset = u16;
+pub type TupleSize = u16;
+
+pub type TupleSlot = (TupleOffset, TupleSize);
+
+const U8_SIZE: usize = std::mem::size_of::<u8>();
+const U16_SIZE: usize = std::mem::size_of::<u16>();
+const U32_SIZE: usize = std::mem::size_of::<u32>();
+pub(in crate::storage) const TUPLE_SLOT_SIZE: u16 = std::mem::size_of::<TupleSlot>() as u16;
 
 pub(in crate::storage) struct Serializer<'a> {
     buffer: &'a mut [u8],
     pos: usize,
 }
-
-const U8_SIZE: usize = std::mem::size_of::<u8>();
-const U16_SIZE: usize = std::mem::size_of::<u16>();
-const U32_SIZE: usize = std::mem::size_of::<u32>();
 
 impl<'a> Serializer<'a> {
     pub fn new(buffer: &'a mut [u8]) -> Self {
@@ -33,6 +40,12 @@ impl<'a> Serializer<'a> {
         let (offset, size) = tuple_slot;
         self.serialize_u16(offset);
         self.serialize_u16(size);
+    }
+
+    pub fn serialize_tuple_id(&mut self, tuple_id: TupleId) {
+        let (page_no, slot) = tuple_id;
+        self.serialize_u32(page_no);
+        self.serialize_u8(slot);
     }
 
     pub fn copy_bytes(&mut self, bytes: &[u8]) {
@@ -87,6 +100,12 @@ impl<'a> Deserializer<'a> {
         val
     }
 
+    pub fn deserialize_tuple_id(&mut self) -> TupleId {
+        let page_no = self.deserialize_u32();
+        let slot = self.deserialize_u8();
+        (page_no, slot)
+    }
+
     pub fn copy_bytes(&mut self, dest: &mut [u8], count: usize) {
         for byte in dest.iter_mut().take(count) {
             *byte = self.buffer[self.pos];
@@ -130,7 +149,8 @@ impl PageHeader {
         ((self.free_space_start - Self::SIZE) / TUPLE_SLOT_SIZE) as u8
     }
 
-    pub fn tuple_slot(bytes: &[u8], tuple_slot: u8) -> TupleSlot {
+    /// Returns the start offset and its size of a tuple stored at tuple_slot
+    pub fn tuple_slot(bytes: &[u8], tuple_slot: Slot) -> TupleSlot {
         let slot_offset = (Self::SIZE + (tuple_slot as u16) * TUPLE_SLOT_SIZE) as usize;
         let mut deserializer = Deserializer::new(&bytes[slot_offset..]);
         let tuple_offset = deserializer.deserialize_u16();
@@ -138,13 +158,15 @@ impl PageHeader {
         (tuple_offset, tuple_size)
     }
 
-    pub fn add_tuple_slot(&mut self, buffer: &mut [u8], tuple_size: u16) -> u16 {
+    /// Adds a new tuple slot to the page header.
+    /// Returns the slot number and the start offset of the tuple on this page
+    pub fn add_tuple_slot(&mut self, buffer: &mut [u8], tuple_size: u16) -> (Slot, u16) {
         self.free_space_end -= tuple_size;
         let slot: TupleSlot = (self.free_space_end, tuple_size);
         let mut serializer = Serializer::new(&mut buffer[self.free_space_start as usize..]);
         serializer.serialize_tuple_slot(slot);
         self.free_space_start += serializer.end() as u16;
-        self.free_space_end
+        (self.slots() - 1, self.free_space_end)
     }
 
     /// serializes this PageHeader to its bytes so that it can be persisted to disk.
@@ -156,10 +178,3 @@ impl PageHeader {
         serializer.end()
     }
 }
-
-pub type TupleOffset = u16;
-pub type TupleSize = u16;
-
-pub type TupleSlot = (TupleOffset, TupleSize);
-
-pub(in crate::storage) const TUPLE_SLOT_SIZE: u16 = std::mem::size_of::<TupleSlot>() as u16;
