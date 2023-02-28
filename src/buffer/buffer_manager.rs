@@ -22,6 +22,10 @@ impl<'a> BufferGuard<'a> {
         }
     }
 
+    pub fn page_id(&self) -> PageId {
+        self.buffer.page_id()
+    }
+
     pub fn read(&self) -> RwLockReadGuard<[u8]> {
         self.buffer.data().read().unwrap()
     }

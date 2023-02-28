@@ -36,4 +36,8 @@ impl<'a> Executor for SeqScanExecutor<'a> {
     fn schema(&self) -> &Schema {
         self.table.schema()
     }
+
+    fn re_evaluate_tuple(&self, _tuple: &Tuple) -> bool {
+        true
+    }
 }

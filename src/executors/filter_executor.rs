@@ -48,6 +48,14 @@ impl<'a> Executor for FilterExecutor<'a> {
     fn schema(&self) -> &Schema {
         self.child.schema()
     }
+
+    fn re_evaluate_tuple(&self, tuple: &Tuple) -> bool {
+        self.child.re_evaluate_tuple(tuple)
+            && match self.filter.evaluate(&[tuple]) {
+                Value::Boolean(b) => b,
+                _ => false,
+            }
+    }
 }
 
 #[cfg(test)]

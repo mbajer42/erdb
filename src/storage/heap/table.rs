@@ -14,7 +14,7 @@ use crate::common::{PageNo, TableId, INVALID_PAGE_NO, PAGE_SIZE};
 use crate::concurrency::lock_manager::LockMode;
 use crate::concurrency::{Transaction, TransactionStatus, INVALID_TRANSACTION_ID};
 use crate::storage::utils::{PageHeader, TUPLE_SLOT_SIZE};
-use crate::storage::TupleId;
+use crate::storage::{Slot, TupleId};
 use crate::tuple::Tuple;
 
 lazy_static! {
@@ -35,12 +35,16 @@ pub enum HeapTupleUpdateResult {
     SelfUpdated,
     /// Tuple was deleted by a committed transaction
     Deleted,
+    /// Tuple was updated by a committed transaction
+    /// Contains TupleId where the updated tuple can be found
+    Updated(TupleId),
     /// Tuple is being modified by an in-progress transaction
     BeingModified,
 }
 
 fn heap_tuple_satisfies_update(
     header: &HeapTupleHeader,
+    original_id: TupleId,
     transaction: &Transaction,
 ) -> Result<HeapTupleUpdateResult> {
     if transaction
@@ -63,7 +67,13 @@ fn heap_tuple_satisfies_update(
             .manager
             .get_transaction_status(header.delete_tid)?
         {
-            TransactionStatus::Committed => Ok(HeapTupleUpdateResult::Deleted),
+            TransactionStatus::Committed => {
+                if header.tuple_id == original_id {
+                    Ok(HeapTupleUpdateResult::Deleted)
+                } else {
+                    Ok(HeapTupleUpdateResult::Updated(header.tuple_id))
+                }
+            }
             TransactionStatus::Aborted => Ok(HeapTupleUpdateResult::Ok),
             TransactionStatus::InProgress => Ok(HeapTupleUpdateResult::BeingModified),
             _ => unreachable!(),
@@ -131,16 +141,18 @@ impl<'a> std::iter::Iterator for HeapTupleIterator<'a> {
     }
 }
 
+/// tries to insert a tuple to the current page.
+/// If successful, returns the slot, else None
 fn insert_tuple(
     buffer: &mut [u8],
     tuple_size: u16,
     page_no: PageNo,
     tuple: &Tuple,
     transaction: &Transaction,
-) -> bool {
+) -> Option<Slot> {
     let mut header = PageHeader::parse(buffer);
     if header.free_space() < tuple_size + TUPLE_SLOT_SIZE {
-        return false;
+        return None;
     }
     let (slot, tuple_start) = header.add_tuple_slot(buffer, tuple_size);
     serialize_heap_tuple(
@@ -152,7 +164,7 @@ fn insert_tuple(
     );
     header.serialize(buffer);
 
-    true
+    Some(slot)
 }
 pub struct Table<'a> {
     table_id: TableId,
@@ -197,29 +209,150 @@ impl<'a> Table<'a> {
         }
     }
 
-    pub fn insert_tuple(&self, tuple: &Tuple, transaction: &Transaction) -> Result<()> {
+    /// Checks whether a tuple fits into a page.
+    /// If so, returns the required free space in a page
+    fn check_tuple_size(&self, tuple: &Tuple) -> Result<u16> {
         let required_size = required_free_space(tuple);
         if required_size >= MAX_TUPLE_SIZE {
             return Err(Error::msg(format!(
                 "Attempted to insert a tuple which would occupy {required_size} bytes."
             )));
         }
+        Ok(required_size)
+    }
 
-        let page_no = self.buffer_manager.highest_page_no(self.table_id)?;
+    pub fn fetch_tuple(&self, tuple_id: TupleId) -> Result<Tuple> {
+        let (page_no, slot) = tuple_id;
+        let buffer = self.fetch_page(page_no)?;
+        let data = buffer.read();
+        let (offset, _size) = PageHeader::tuple_slot(&data, slot);
+        let tuple_data = &(&data)[offset as usize..];
+        let header = parse_heap_tuple_header(tuple_data, &self.schema);
+        let tuple = parse_heap_tuple(&(&data)[offset as usize..], &header, &self.schema);
+        Ok(tuple)
+    }
+
+    pub fn insert_tuple(&self, tuple: &Tuple, transaction: &Transaction) -> Result<()> {
+        let required_size = self.check_tuple_size(tuple)?;
+
+        let mut page_no = self.buffer_manager.highest_page_no(self.table_id)?;
         let mut buffer = if page_no == INVALID_PAGE_NO {
-            self.allocate_new_page()?
+            let buffer = self.allocate_new_page()?;
+            let (_, new_page) = buffer.page_id();
+            page_no = new_page;
+            buffer
         } else {
             self.fetch_page(page_no)?
         };
 
         loop {
             let mut data = buffer.write();
-            if insert_tuple(data.deref_mut(), required_size, page_no, tuple, transaction) {
+            if insert_tuple(data.deref_mut(), required_size, page_no, tuple, transaction).is_some()
+            {
                 buffer.mark_dirty();
                 return Ok(());
             } else {
                 drop(data);
                 buffer = self.allocate_new_page()?;
+                let (_, new_page) = buffer.page_id();
+                page_no = new_page;
+            }
+        }
+    }
+
+    pub fn update_tuple(
+        &self,
+        tuple_id: TupleId,
+        updated_tuple: &Tuple,
+        transaction: &Transaction,
+    ) -> Result<HeapTupleUpdateResult> {
+        let required_size = self.check_tuple_size(updated_tuple)?;
+
+        let (page_no, slot) = tuple_id;
+        let mut tuple_lock = None;
+        let buffer = self.fetch_page(page_no)?;
+
+        loop {
+            let mut data = buffer.write();
+
+            let (start, size) = PageHeader::tuple_slot(&data, slot);
+            let tuple_data = &(&data)[start as usize..(start + size) as usize];
+            let mut header = parse_heap_tuple_header(tuple_data, &self.schema);
+            match heap_tuple_satisfies_update(&header, tuple_id, transaction)? {
+                result @ (HeapTupleUpdateResult::SelfUpdated
+                | HeapTupleUpdateResult::Deleted
+                | HeapTupleUpdateResult::Updated(_)) => return Ok(result),
+                HeapTupleUpdateResult::BeingModified => {
+                    // tuple is currently being modified by another transaction.
+                    // lock this tuple, so that we have priority over it once the other transaction ends
+                    let table_id_tuple_id = (self.table_id, tuple_id);
+                    if tuple_lock.is_none() {
+                        tuple_lock = Some(
+                            transaction
+                                .manager
+                                .lock_manager
+                                .lock_tuple(table_id_tuple_id, LockMode::Exclusive),
+                        );
+                    }
+                    drop(data);
+                    transaction.wait_for_transaction_to_end(header.delete_tid);
+
+                    // transaction ended, retry
+                }
+                HeapTupleUpdateResult::Ok => {
+                    // try to insert at the current page first
+                    if let Some(update_slot) = insert_tuple(
+                        &mut data,
+                        required_size,
+                        page_no,
+                        updated_tuple,
+                        transaction,
+                    ) {
+                        header.tuple_id = (page_no, update_slot);
+                        header.delete_tid = transaction.tid();
+                        header.serialize(&mut (&mut data)[start as usize..(start + size) as usize]);
+                        buffer.mark_dirty();
+                        return Ok(HeapTupleUpdateResult::Ok);
+                    } else {
+                        let mut update_page_no =
+                            self.buffer_manager.highest_page_no(self.table_id)?;
+
+                        let mut update_buffer = if page_no == update_page_no {
+                            // we already tried to update on this page, allocate new buffer
+                            let buffer = self.allocate_new_page()?;
+                            let (_, new_page) = buffer.page_id();
+                            update_page_no = new_page;
+                            buffer
+                        } else {
+                            self.fetch_page(update_page_no)?
+                        };
+
+                        loop {
+                            let mut update_data = update_buffer.write();
+                            if let Some(update_slot) = insert_tuple(
+                                update_data.deref_mut(),
+                                required_size,
+                                update_page_no,
+                                updated_tuple,
+                                transaction,
+                            ) {
+                                header.tuple_id = (update_page_no, update_slot);
+                                header.serialize(
+                                    &mut (&mut data)[start as usize..(start + size) as usize],
+                                );
+                                buffer.mark_dirty();
+                                buffer.mark_dirty();
+                                update_buffer.mark_dirty();
+                                return Ok(HeapTupleUpdateResult::Ok);
+                            } else {
+                                drop(update_data);
+                                update_buffer = self.allocate_new_page()?;
+                                let (_, new_page_no) = buffer.page_id();
+                                update_page_no = new_page_no;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -240,10 +373,10 @@ impl<'a> Table<'a> {
             let tuple_data = &mut (&mut data)[start as usize..(start + size) as usize];
             let mut header = parse_heap_tuple_header(tuple_data, &self.schema);
 
-            match heap_tuple_satisfies_update(&header, transaction)? {
-                result @ (HeapTupleUpdateResult::SelfUpdated | HeapTupleUpdateResult::Deleted) => {
-                    return Ok(result)
-                }
+            match heap_tuple_satisfies_update(&header, tuple_id, transaction)? {
+                result @ (HeapTupleUpdateResult::SelfUpdated
+                | HeapTupleUpdateResult::Deleted
+                | HeapTupleUpdateResult::Updated(_)) => return Ok(result),
                 HeapTupleUpdateResult::Ok => {
                     // we can delete it
                     header.delete_tid = transaction.tid();
@@ -498,6 +631,85 @@ mod tests {
             let result = table.delete_tuple((1, 0), &delete_transaction).unwrap();
             assert_eq!(result, HeapTupleUpdateResult::Deleted);
         });
+
+        Ok(())
+    }
+
+    #[test]
+    fn can_update_tuple() -> Result<()> {
+        let data_dir = tempdir()?;
+        let file_manager = FileManager::new(data_dir.path())?;
+        file_manager.create_table(1)?;
+        let buffer_manager = BufferManager::new(file_manager, 2);
+        let lock_manager = LockManager::new();
+        let transaction_manager =
+            TransactionManager::new(&buffer_manager, &lock_manager, true).unwrap();
+
+        let schema = Schema::new(vec![ColumnDefinition::new(
+            TypeId::Integer,
+            "number".to_owned(),
+            0,
+            true,
+        )]);
+
+        let table = Table::new(1, &buffer_manager, schema);
+        let tuple = Tuple::new(vec![Value::Integer(21)]);
+
+        let insert_transaction = transaction_manager.start_transaction()?;
+        table.insert_tuple(&tuple, &insert_transaction)?;
+        insert_transaction.commit()?;
+
+        let update_transaction = transaction_manager.start_transaction()?;
+        let updated_tuple = Tuple::new(vec![Value::Integer(42)]);
+        let result = table.update_tuple((1, 0), &updated_tuple, &update_transaction)?;
+        assert_eq!(result, HeapTupleUpdateResult::Ok);
+        update_transaction.commit()?;
+
+        let select_transaction = transaction_manager.start_transaction()?;
+        let tuples = table
+            .iter(&select_transaction)?
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(tuples.len(), 1);
+        assert_eq!(tuples[0].values[0], Value::Integer(42));
+
+        Ok(())
+    }
+
+    #[test]
+    fn trying_to_update_updated_tuple_results_in_updated_location() -> Result<()> {
+        let data_dir = tempdir()?;
+        let file_manager = FileManager::new(data_dir.path())?;
+        file_manager.create_table(1)?;
+        let buffer_manager = BufferManager::new(file_manager, 2);
+        let lock_manager = LockManager::new();
+        let transaction_manager =
+            TransactionManager::new(&buffer_manager, &lock_manager, true).unwrap();
+
+        let schema = Schema::new(vec![ColumnDefinition::new(
+            TypeId::Integer,
+            "number".to_owned(),
+            0,
+            true,
+        )]);
+
+        let table = Table::new(1, &buffer_manager, schema);
+        let tuple = Tuple::new(vec![Value::Integer(17)]);
+
+        let insert_transaction = transaction_manager.start_transaction()?;
+        table.insert_tuple(&tuple, &insert_transaction)?;
+        insert_transaction.commit()?;
+
+        let update_transaction = transaction_manager.start_transaction()?;
+        let updated_tuple = Tuple::new(vec![Value::Integer(21)]);
+        let result = table.update_tuple((1, 0), &updated_tuple, &update_transaction)?;
+        assert_eq!(result, HeapTupleUpdateResult::Ok);
+        update_transaction.commit()?;
+
+        let update_transaction = transaction_manager.start_transaction()?;
+        let updated_tuple = Tuple::new(vec![Value::Integer(42)]);
+        let result = table.update_tuple((1, 0), &updated_tuple, &update_transaction)?;
+        assert_eq!(result, HeapTupleUpdateResult::Updated((1, 1)));
+        update_transaction.commit()?;
 
         Ok(())
     }

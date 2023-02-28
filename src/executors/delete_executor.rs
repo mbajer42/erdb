@@ -5,6 +5,7 @@ use super::Executor;
 use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
 use crate::concurrency::Transaction;
 use crate::storage::heap::table::{HeapTupleUpdateResult, Table};
+use crate::storage::TupleId;
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
 
@@ -40,15 +41,36 @@ impl<'a> DeleteExecutor<'a> {
         }
     }
 
-    fn try_delete(&mut self) -> Result<()> {
-        while let Some(tuple) = self.child.next().transpose()? {
-            let delete_result = self.table.delete_tuple(tuple.tuple_id, self.transaction)?;
+    fn try_delete_single_tuple(&mut self, mut tuple_id: TupleId) -> Result<()> {
+        loop {
+            let delete_result = self.table.delete_tuple(tuple_id, self.transaction)?;
 
             match delete_result {
-                HeapTupleUpdateResult::Ok => self.tuples_deleted += 1,
-                HeapTupleUpdateResult::Deleted | HeapTupleUpdateResult::SelfUpdated => (),
+                HeapTupleUpdateResult::Ok => {
+                    self.tuples_deleted += 1;
+                    return Ok(());
+                }
+                HeapTupleUpdateResult::Deleted | HeapTupleUpdateResult::SelfUpdated => {
+                    return Ok(())
+                }
+                HeapTupleUpdateResult::Updated(updated_tuple_id) => {
+                    // tuple was updated, fetch the updated tuple, re-evaluate it and if still meets the criteria, try to delete it again
+                    let tuple = self.table.fetch_tuple(updated_tuple_id)?;
+                    if self.child.re_evaluate_tuple(&tuple) {
+                        tuple_id = updated_tuple_id;
+                        continue;
+                    } else {
+                        return Ok(());
+                    }
+                }
                 _ => unreachable!(),
             };
+        }
+    }
+
+    fn try_delete(&mut self) -> Result<()> {
+        while let Some(tuple) = self.child.next().transpose()? {
+            self.try_delete_single_tuple(tuple.tuple_id)?;
         }
 
         Ok(())

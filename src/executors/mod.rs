@@ -28,7 +28,14 @@ mod values_executor;
 pub trait Executor {
     fn schema(&self) -> &Schema;
     fn next(&mut self) -> Option<Result<Tuple>>;
+    /// Rewinds the executor to its initial state
     fn rewind(&mut self) -> Result<()>;
+    /// Re-evaluates a tuple, whether this executor would return it again.
+    /// Needed for READ COMMITTED transactions, when another transaction modified
+    /// it in the meantime, re-evaluate if it still meets the criteria
+    fn re_evaluate_tuple(&self, _tuple: &Tuple) -> bool {
+        unreachable!()
+    }
 }
 
 pub struct ExecutorFactory<'a> {
