@@ -8,6 +8,7 @@ use self::insert_executor::InsertExecutor;
 use self::nested_loop_join_executor::NestedLoopJoinExecutor;
 use self::projection_executor::ProjectionExecutor;
 use self::seq_scan_executor::SeqScanExecutor;
+use self::update_executor::UpdateExecutor;
 use self::values_executor::ValuesExecutor;
 use crate::buffer::buffer_manager::BufferManager;
 use crate::catalog::schema::Schema;
@@ -23,6 +24,7 @@ mod insert_executor;
 mod nested_loop_join_executor;
 mod projection_executor;
 mod seq_scan_executor;
+mod update_executor;
 mod values_executor;
 
 pub trait Executor {
@@ -90,7 +92,15 @@ impl<'a> ExecutorFactory<'a> {
             } => return self.insert_tables(child),
             PhysicalPlan::Filter { filter: _, child } => return self.insert_tables(child),
             PhysicalPlan::Delete { from: _, child } => return self.insert_tables(child),
-            _ => return,
+            PhysicalPlan::Update {
+                table: _,
+                set: _,
+                child,
+            } => return self.insert_tables(child),
+            PhysicalPlan::Values {
+                values: _,
+                output_schema: _,
+            } => return,
         };
 
         self.insert_table(table_id, schema);
@@ -159,6 +169,16 @@ impl<'a> ExecutorFactory<'a> {
                 Ok(Box::new(DeleteExecutor::new(
                     table,
                     child,
+                    self.transaction,
+                )))
+            }
+            PhysicalPlan::Update { table, set, child } => {
+                let child = self.create_executor_internal(*child)?;
+                let table = self.get_table(table);
+                Ok(Box::new(UpdateExecutor::new(
+                    table,
+                    child,
+                    set,
                     self.transaction,
                 )))
             }

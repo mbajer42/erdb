@@ -1,4 +1,5 @@
-use std::collections::VecDeque;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, VecDeque};
 
 use anyhow::{Error, Result};
 
@@ -60,6 +61,7 @@ impl Parser {
                 Keyword::Select => Statement::Select(self.parse_select_statement()?),
                 Keyword::Values => Statement::Select(self.parse_values()?),
                 Keyword::Insert => self.parse_insert()?,
+                Keyword::Update => self.parse_update()?,
                 Keyword::Delete => self.parse_delete()?,
                 Keyword::Start => self.parse_start_transaction()?,
                 Keyword::Commit => Statement::Commit,
@@ -82,6 +84,48 @@ impl Parser {
             Token::End => Ok(()),
             found => self.wrong_token("end of statement", found),
         }
+    }
+
+    fn parse_update(&mut self) -> Result<Statement> {
+        let table = self.parse_table()?;
+
+        self.expect(Token::Keyword(Keyword::Set))?;
+
+        let mut set_expressions = HashMap::new();
+        loop {
+            let column = self.parse_identifier()?;
+            self.expect(Token::Eq)?;
+            let expression = self.parse_expression()?;
+
+            match set_expressions.entry(column) {
+                Entry::Vacant(e) => e.insert(expression),
+                Entry::Occupied(entry) => {
+                    return Err(Error::msg(format!(
+                        "Multiple assignments to column {}",
+                        entry.key()
+                    )))
+                }
+            };
+
+            if self.peek_token() == &Token::Comma {
+                self.next_token();
+            } else {
+                break;
+            }
+        }
+
+        let filter = if self.peek_token() == &Token::Keyword(Keyword::Where) {
+            self.next_token();
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+
+        Ok(Statement::Update {
+            table,
+            set: set_expressions,
+            filter,
+        })
     }
 
     fn parse_delete(&mut self) -> Result<Statement> {
@@ -621,6 +665,8 @@ pub fn parse_sql(sql: &str) -> Result<Statement> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::ast::{
         BinaryOperator, ColumnDefinition, DataType, ExprNode, Projection, Statement, TableNode,
         UnaryOperator,
@@ -911,6 +957,46 @@ mod tests {
                 .into(),
                 filter: None,
             },
+        };
+
+        assert_eq!(statement, expected_statement);
+    }
+
+    #[test]
+    fn can_parse_update_statements() {
+        let sql = "
+            update accounts set balance = balance + 100, tx_cnt = tx_cnt + 1 where id = 42
+        ";
+
+        let statement = parse_sql(sql).unwrap();
+        let expected_statement = Statement::Update {
+            table: TableNode::TableReference {
+                name: "accounts".to_owned(),
+                alias: None,
+            },
+            set: HashMap::from([
+                (
+                    "balance".to_owned(),
+                    ExprNode::Binary {
+                        left: Box::new(ExprNode::Identifier("balance".to_owned())),
+                        op: BinaryOperator::Plus,
+                        right: Box::new(ExprNode::Number("100".to_owned())),
+                    },
+                ),
+                (
+                    "tx_cnt".to_owned(),
+                    ExprNode::Binary {
+                        left: Box::new(ExprNode::Identifier("tx_cnt".to_owned())),
+                        op: BinaryOperator::Plus,
+                        right: Box::new(ExprNode::Number("1".to_owned())),
+                    },
+                ),
+            ]),
+            filter: Some(ExprNode::Binary {
+                left: Box::new(ExprNode::Identifier("id".to_owned())),
+                op: BinaryOperator::Eq,
+                right: Box::new(ExprNode::Number("42".to_owned())),
+            }),
         };
 
         assert_eq!(statement, expected_statement);

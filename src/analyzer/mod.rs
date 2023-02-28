@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use anyhow::{Error, Result};
 
@@ -29,8 +29,63 @@ impl<'a> Analyzer<'a> {
             Statement::Select(select) => Ok(LogicalPlan::Select(self.analyze_select(select)?)),
             Statement::Delete { from, filter } => self.analyze_delete(from, filter),
             Statement::Insert { into, select } => self.analyze_insert(into, select),
+            Statement::Update { table, set, filter } => self.analyze_update(table, set, filter),
             _ => unreachable!(),
         }
+    }
+
+    fn analyze_update(
+        &self,
+        table: ast::TableNode,
+        set_expressions: HashMap<String, ExprNode>,
+        filter: Option<ExprNode>,
+    ) -> Result<LogicalPlan> {
+        let table = self.analyze_table(table)?;
+
+        let set = set_expressions
+            .into_iter()
+            .map(|(column, expression)| {
+                let (col_expr, col_def) =
+                    Self::analyze_expression(ExprNode::Identifier(column), &table)?;
+                let column = match col_expr {
+                    LogicalExpr::Column(col) => col,
+                    _ => unreachable!(),
+                };
+                let (value_expr, value_def) = Self::analyze_expression(expression, &table)?;
+
+                if value_def.type_id != TypeId::Unknown && value_def.type_id != col_def.type_id {
+                    return Err(Error::msg(format!(
+                        "Cannot set value for column '{}'. Left type '{}', right type '{}'",
+                        column.join("."),
+                        col_def.type_id,
+                        value_def.type_id
+                    )));
+                }
+                if value_def.type_id == TypeId::Unknown && value_def.not_null {
+                    return Err(Error::msg(format!(
+                        "Cannot set NULL for column '{}'. Column has 'NOT NULL' constraint",
+                        column.join(".")
+                    )));
+                }
+
+                Ok((column, value_expr))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
+        let filter = if let Some(filter_expr) = filter {
+            let (expr, col_def) = Self::analyze_expression(filter_expr, &table)?;
+            if col_def.type_id != TypeId::Unknown && col_def.type_id != TypeId::Boolean {
+                return Err(Error::msg(format!(
+                    "WHERE condition must evaluate to boolean, but evaluates to {}",
+                    col_def.type_id
+                )));
+            }
+            Some(expr)
+        } else {
+            None
+        };
+
+        Ok(LogicalPlan::Update { table, set, filter })
     }
 
     fn analyze_delete(

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::{Error, Result};
 
 use self::physical_plan::{Expr, PhysicalPlan};
@@ -20,6 +22,7 @@ impl Planner {
         match logical_plan {
             LogicalPlan::Select(query) => self.plan_query(query),
             LogicalPlan::Delete { from, filter } => self.plan_delete(from, filter),
+            LogicalPlan::Update { table, set, filter } => self.plan_update(table, set, filter),
             LogicalPlan::Insert {
                 query,
                 target,
@@ -33,6 +36,48 @@ impl Planner {
                 })
             }
         }
+    }
+
+    fn plan_update(
+        &self,
+        table: TableReference,
+        set_expressions: HashMap<Vec<String>, LogicalExpr>,
+        filter: Option<LogicalExpr>,
+    ) -> Result<PhysicalPlan> {
+        let table_id = match &table {
+            TableReference::BaseTable {
+                table_id,
+                name: _,
+                schema: _,
+            } => *table_id,
+            _ => unreachable!(),
+        };
+
+        let child = self.plan_table_reference(table)?;
+        let child = self.plan_filter(filter, child)?;
+
+        let set_expressions = set_expressions
+            .into_iter()
+            .map(|(column, expr)| {
+                let column = match self.resolve_column(column, &[&child])? {
+                    Expr::ColumnReference {
+                        tuple_idx: _,
+                        col_idx,
+                    } => col_idx,
+                    _ => unreachable!(),
+                };
+
+                let expr = self.plan_expression(expr, &[&child])?;
+
+                Ok((column, expr))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
+        Ok(PhysicalPlan::Update {
+            table: table_id,
+            set: set_expressions,
+            child: Box::new(child),
+        })
     }
 
     fn plan_delete(

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use lazy_static::lazy_static;
 
 use crate::catalog::schema::Schema;
@@ -55,6 +57,11 @@ pub enum LogicalPlan {
     Delete {
         from: TableReference,
         /// WHERE clause
+        filter: Option<LogicalExpr>,
+    },
+    Update {
+        table: TableReference,
+        set: HashMap<Vec<String>, LogicalExpr>,
         filter: Option<LogicalExpr>,
     },
     Select(Query),

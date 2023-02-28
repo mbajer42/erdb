@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::catalog::schema::Schema;
 use crate::common::TableId;
 use crate::parser::ast::{BinaryOperator, JoinType, UnaryOperator};
@@ -74,6 +76,11 @@ pub enum PhysicalPlan {
         target_schema: Schema,
         child: Box<PhysicalPlan>,
     },
+    Update {
+        table: TableId,
+        set: HashMap<usize, Expr>,
+        child: Box<PhysicalPlan>,
+    },
     Delete {
         from: TableId,
         child: Box<PhysicalPlan>,
@@ -113,6 +120,11 @@ impl PhysicalPlan {
                 child: _,
             } => unreachable!(),
             Self::Delete { from: _, child: _ } => unreachable!(),
+            Self::Update {
+                table: _,
+                set: _,
+                child: _,
+            } => unreachable!(),
             Self::Filter { filter: _, child } => child.schema(),
             Self::NestedLoopJoin {
                 left: _,

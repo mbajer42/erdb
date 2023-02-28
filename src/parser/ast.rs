@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Display;
 
 #[derive(Debug, PartialEq)]
@@ -162,6 +162,11 @@ pub enum Statement {
     Insert {
         into: TableNode,
         select: SelectStatement,
+    },
+    Update {
+        table: TableNode,
+        set: HashMap<String, ExprNode>,
+        filter: Option<ExprNode>,
     },
     Delete {
         from: TableNode,
