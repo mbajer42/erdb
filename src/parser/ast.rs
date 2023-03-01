@@ -1,6 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Display;
 
+use crate::concurrency::IsolationLevel;
+
 #[derive(Debug, PartialEq)]
 pub enum DataType {
     Integer,
@@ -172,7 +174,9 @@ pub enum Statement {
         from: TableNode,
         filter: Option<ExprNode>,
     },
-    StartTransaction,
+    StartTransaction {
+        isolation_level: Option<IsolationLevel>,
+    },
     Commit,
     Rollback,
 }

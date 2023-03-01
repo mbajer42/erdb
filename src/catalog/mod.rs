@@ -296,7 +296,7 @@ mod tests {
             ColumnDefinition::new(TypeId::Text, "email".to_owned(), 3, false),
         ];
 
-        let transaction = transaction_manager.start_transaction()?;
+        let transaction = transaction_manager.start_transaction(None)?;
         catalog.create_table("accounts", expected_columns.clone(), &transaction)?;
         transaction.commit()?;
         let fetched_columns = catalog.get_schema("accounts");

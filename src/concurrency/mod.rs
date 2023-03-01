@@ -16,6 +16,19 @@ pub type TransactionId = u32;
 pub const INVALID_TRANSACTION_ID: TransactionId = 0;
 pub const BOOTSTRAP_TRANSACTION_ID: TransactionId = 1;
 
+const DEFAULT_ISOLATION_LEVEL: IsolationLevel = IsolationLevel::ReadCommitted;
+
+/// Isolation level determines what the transaction can see
+/// when other transactions are running concurrently
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum IsolationLevel {
+    /// Default isolation level,
+    /// Only committed rows before the transaction began are visible
+    ReadCommitted,
+    /// Rows are only visible if they were committed before the transaction began
+    RepeatableRead,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum TransactionStatus {
     /// This transaction does not exist yet
@@ -54,6 +67,8 @@ impl From<u8> for TransactionStatus {
 pub struct Transaction<'a> {
     /// the transaction id of the current transaction
     tid: TransactionId,
+    /// isolation level of this transaction
+    isolation_level: IsolationLevel,
     /// first unassigned transaction id
     tid_max: TransactionId,
     /// how many commands were run so far
@@ -70,6 +85,11 @@ impl<'a> Transaction<'a> {
     /// Returns its own transaction id
     pub fn tid(&self) -> TransactionId {
         self.tid
+    }
+
+    /// Return its own isolation level
+    pub fn isolation_level(&self) -> IsolationLevel {
+        self.isolation_level
     }
 
     /// Waits for another transaction to end
@@ -222,15 +242,21 @@ impl<'a> TransactionManager<'a> {
         Ok(this)
     }
 
-    pub fn start_transaction(&'a self) -> Result<Transaction<'a>> {
-        self.create_transaction(false)
+    pub fn start_transaction(
+        &'a self,
+        isolation_level: Option<IsolationLevel>,
+    ) -> Result<Transaction<'a>> {
+        self.create_transaction(false, isolation_level.unwrap_or(DEFAULT_ISOLATION_LEVEL))
     }
 
     pub fn start_implicit_transaction(&'a self) -> Result<Transaction<'a>> {
-        self.create_transaction(true)
+        self.create_transaction(true, DEFAULT_ISOLATION_LEVEL)
     }
 
     pub fn refresh_transaction(&self, transaction: &mut Transaction) -> Result<()> {
+        if transaction.isolation_level == IsolationLevel::RepeatableRead {
+            return Ok(());
+        }
         let alive_tids = self.alive_tids.read().unwrap();
         transaction.alive_tids = alive_tids.clone();
         transaction.tid_max = self.next_tid.load(Ordering::Relaxed);
@@ -242,7 +268,11 @@ impl<'a> TransactionManager<'a> {
         }
     }
 
-    fn create_transaction(&'a self, auto_commit: bool) -> Result<Transaction<'a>> {
+    fn create_transaction(
+        &'a self,
+        auto_commit: bool,
+        isolation_level: IsolationLevel,
+    ) -> Result<Transaction<'a>> {
         let tid = self
             .next_tid
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |val| {
@@ -265,6 +295,7 @@ impl<'a> TransactionManager<'a> {
         self.lock_manager.start_transaction(tid);
         Ok(Transaction {
             tid,
+            isolation_level,
             tid_max,
             command_id: 0,
             auto_commit,
@@ -282,6 +313,7 @@ impl<'a> TransactionManager<'a> {
         Transaction {
             tid: BOOTSTRAP_TRANSACTION_ID,
             tid_max: TransactionId::MAX,
+            isolation_level: DEFAULT_ISOLATION_LEVEL,
             command_id: 0,
             auto_commit: false,
             end: Cell::new(TransactionEnd::None),
@@ -421,7 +453,7 @@ mod tests {
         let transaction_manager =
             TransactionManager::new(&buffer_manager, &lock_manager, true).unwrap();
 
-        let t1 = transaction_manager.start_transaction().unwrap();
+        let t1 = transaction_manager.start_transaction(None).unwrap();
         assert_eq!(t1.tid, 2);
         assert_eq!(
             transaction_manager.get_transaction_status(t1.tid).unwrap(),
@@ -433,7 +465,7 @@ mod tests {
             TransactionStatus::Committed
         );
 
-        let t2 = transaction_manager.start_transaction().unwrap();
+        let t2 = transaction_manager.start_transaction(None).unwrap();
         assert_eq!(t2.tid, 3);
         assert_eq!(
             transaction_manager.get_transaction_status(t2.tid).unwrap(),
@@ -447,7 +479,7 @@ mod tests {
 
         // fill at least a page of the transaction log
         for _ in 0..4 * PAGE_SIZE {
-            let t = transaction_manager.start_transaction().unwrap();
+            let t = transaction_manager.start_transaction(None).unwrap();
             if t.tid % 5 == 0 {
                 t.abort().unwrap();
             } else {
@@ -477,7 +509,7 @@ mod tests {
             }
         }
 
-        let t = transaction_manager.start_transaction().unwrap();
+        let t = transaction_manager.start_transaction(None).unwrap();
         assert_eq!(t.tid, (4 * PAGE_SIZE + 4) as u32);
     }
 }

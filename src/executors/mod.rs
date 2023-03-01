@@ -242,7 +242,7 @@ mod tests {
     pub struct ExecutionTestContext<'a> {
         buffer_manager: &'a BufferManager,
         catalog: Catalog<'a>,
-        transaction_manager: TransactionManager<'a>,
+        pub transaction_manager: TransactionManager<'a>,
     }
 
     impl<'a> ExecutionTestContext<'a> {
@@ -264,14 +264,10 @@ mod tests {
         }
 
         pub fn create_table(&self, table_name: &str, columns: Vec<ColumnDefinition>) -> Result<()> {
-            let transaction = self.transaction_manager.start_transaction()?;
+            let transaction = self.transaction_manager.start_transaction(None)?;
             self.catalog
                 .create_table(table_name, columns, &transaction)?;
             transaction.commit()
-        }
-
-        pub fn start_transaction(&'a self) -> Result<Transaction<'a>> {
-            self.transaction_manager.start_transaction()
         }
 
         pub fn execute_query(&self, sql: &str) -> Result<Vec<Tuple>> {
@@ -315,7 +311,10 @@ mod tests {
             )
             .unwrap();
 
-        let insert_transaction = execution_test_context.start_transaction().unwrap();
+        let insert_transaction = execution_test_context
+            .transaction_manager
+            .start_transaction(None)
+            .unwrap();
         let insert_statement = "insert into numbers values (1), (2), (3)";
         execution_test_context
             .execute_query_with_transaction(insert_statement, &insert_transaction)

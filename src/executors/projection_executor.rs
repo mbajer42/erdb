@@ -51,6 +51,8 @@ impl<'a> Executor for ProjectionExecutor<'a> {
 #[cfg(test)]
 mod tests {
 
+    use crate::catalog::schema::{ColumnDefinition, TypeId};
+    use crate::concurrency::IsolationLevel;
     use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
     use crate::parser::ast::BinaryOperator;
     use crate::tuple::value::Value;
@@ -204,5 +206,99 @@ mod tests {
             let sql = format!("select {} {} {}", left, op, right);
             execute_query_expect_single_tuple(&sql, &execution_test_context, expected);
         }
+    }
+
+    #[test]
+    fn repeatable_read_selects_see_only_rows_committed_before_transaction() {
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        execution_test_context
+            .create_table(
+                "numbers",
+                vec![ColumnDefinition::new(
+                    TypeId::Integer,
+                    "number".to_owned(),
+                    0,
+                    true,
+                )],
+            )
+            .unwrap();
+
+        let insert_statement = "insert into numbers values (1), (2), (3)";
+        execution_test_context
+            .execute_query(insert_statement)
+            .unwrap();
+
+        let mut select_transaction = execution_test_context
+            .transaction_manager
+            .start_transaction(Some(IsolationLevel::RepeatableRead))
+            .unwrap();
+
+        let insert_statement = "insert into numbers values (4), (5)";
+        execution_test_context
+            .execute_query(insert_statement)
+            .unwrap();
+
+        execution_test_context
+            .transaction_manager
+            .refresh_transaction(&mut select_transaction)
+            .unwrap();
+        let select_statement = "select * from numbers";
+        let mut result = execution_test_context
+            .execute_query_with_transaction(select_statement, &select_transaction)
+            .unwrap()
+            .into_iter()
+            .map(|tuple| tuple.values[0].as_i32())
+            .collect::<Vec<_>>();
+        result.sort();
+
+        assert_eq!(result, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn read_committed_sees_all_committed_rows() {
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        execution_test_context
+            .create_table(
+                "numbers",
+                vec![ColumnDefinition::new(
+                    TypeId::Integer,
+                    "number".to_owned(),
+                    0,
+                    true,
+                )],
+            )
+            .unwrap();
+
+        let insert_statement = "insert into numbers values (1), (2), (3)";
+        execution_test_context
+            .execute_query(insert_statement)
+            .unwrap();
+
+        let mut select_transaction = execution_test_context
+            .transaction_manager
+            .start_transaction(Some(IsolationLevel::ReadCommitted))
+            .unwrap();
+
+        let insert_statement = "insert into numbers values (4), (5)";
+        execution_test_context
+            .execute_query(insert_statement)
+            .unwrap();
+
+        execution_test_context
+            .transaction_manager
+            .refresh_transaction(&mut select_transaction)
+            .unwrap();
+        let select_statement = "select * from numbers";
+        let mut result = execution_test_context
+            .execute_query_with_transaction(select_statement, &select_transaction)
+            .unwrap()
+            .into_iter()
+            .map(|tuple| tuple.values[0].as_i32())
+            .collect::<Vec<_>>();
+        result.sort();
+
+        assert_eq!(result, vec![1, 2, 3, 4, 5]);
     }
 }

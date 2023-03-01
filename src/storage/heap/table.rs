@@ -473,13 +473,13 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let transaction = transaction_manager.start_transaction().unwrap();
+        let transaction = transaction_manager.start_transaction(None).unwrap();
         for tuple in &tuples {
             table.insert_tuple(tuple, &transaction)?;
         }
         transaction.commit()?;
 
-        let transaction = transaction_manager.start_transaction().unwrap();
+        let transaction = transaction_manager.start_transaction(None).unwrap();
         let collected_tuples = table.iter(&transaction)?.collect::<Vec<_>>();
         assert_eq!(tuples.len(), collected_tuples.len());
         for tuple in collected_tuples {
@@ -510,16 +510,16 @@ mod tests {
         let table = Table::new(1, &buffer_manager, schema);
         let tuple = Tuple::new(vec![Value::Integer(42)]);
 
-        let insert_transaction = transaction_manager.start_transaction()?;
+        let insert_transaction = transaction_manager.start_transaction(None)?;
         table.insert_tuple(&tuple, &insert_transaction)?;
         insert_transaction.commit()?;
 
-        let delete_transaction = transaction_manager.start_transaction()?;
+        let delete_transaction = transaction_manager.start_transaction(None)?;
         let result = table.delete_tuple((1, 0), &delete_transaction)?;
         assert_eq!(result, HeapTupleUpdateResult::Ok);
         delete_transaction.commit()?;
 
-        let select_transaction = transaction_manager.start_transaction()?;
+        let select_transaction = transaction_manager.start_transaction(None)?;
         assert_eq!(table.iter(&select_transaction)?.count(), 0);
 
         Ok(())
@@ -545,7 +545,7 @@ mod tests {
         let table = Arc::new(Table::new(1, &buffer_manager, schema));
         let tuple = Tuple::new(vec![Value::Integer(42)]);
 
-        let insert_transaction = transaction_manager.start_transaction()?;
+        let insert_transaction = transaction_manager.start_transaction(None)?;
         table.insert_tuple(&tuple, &insert_transaction)?;
         insert_transaction.commit()?;
 
@@ -554,7 +554,7 @@ mod tests {
             let transaction_manager = &transaction_manager;
             let delete_started = &delete_started;
             scope.spawn(|| {
-                let delete_transaction = transaction_manager.start_transaction().unwrap();
+                let delete_transaction = transaction_manager.start_transaction(None).unwrap();
                 let result = table.delete_tuple((1, 0), &delete_transaction).unwrap();
                 assert_eq!(result, HeapTupleUpdateResult::Ok);
                 let (lock, condvar) = delete_started;
@@ -572,7 +572,7 @@ mod tests {
                 .wait_while(lock.lock().unwrap(), |delete_started| !*delete_started)
                 .unwrap();
 
-            let delete_transaction = transaction_manager.start_transaction().unwrap();
+            let delete_transaction = transaction_manager.start_transaction(None).unwrap();
             let result = table.delete_tuple((1, 0), &delete_transaction).unwrap();
             assert_eq!(result, HeapTupleUpdateResult::Ok);
         });
@@ -600,7 +600,7 @@ mod tests {
         let table = Arc::new(Table::new(1, &buffer_manager, schema));
         let tuple = Tuple::new(vec![Value::Integer(42)]);
 
-        let insert_transaction = transaction_manager.start_transaction()?;
+        let insert_transaction = transaction_manager.start_transaction(None)?;
         table.insert_tuple(&tuple, &insert_transaction)?;
         insert_transaction.commit()?;
 
@@ -609,7 +609,7 @@ mod tests {
             let transaction_manager = &transaction_manager;
             let delete_started = &delete_started;
             scope.spawn(|| {
-                let delete_transaction = transaction_manager.start_transaction().unwrap();
+                let delete_transaction = transaction_manager.start_transaction(None).unwrap();
                 let result = table.delete_tuple((1, 0), &delete_transaction).unwrap();
                 assert_eq!(result, HeapTupleUpdateResult::Ok);
                 let (lock, condvar) = delete_started;
@@ -627,7 +627,7 @@ mod tests {
                 .wait_while(lock.lock().unwrap(), |delete_started| !*delete_started)
                 .unwrap();
 
-            let delete_transaction = transaction_manager.start_transaction().unwrap();
+            let delete_transaction = transaction_manager.start_transaction(None).unwrap();
             let result = table.delete_tuple((1, 0), &delete_transaction).unwrap();
             assert_eq!(result, HeapTupleUpdateResult::Deleted);
         });
@@ -655,17 +655,17 @@ mod tests {
         let table = Table::new(1, &buffer_manager, schema);
         let tuple = Tuple::new(vec![Value::Integer(21)]);
 
-        let insert_transaction = transaction_manager.start_transaction()?;
+        let insert_transaction = transaction_manager.start_transaction(None)?;
         table.insert_tuple(&tuple, &insert_transaction)?;
         insert_transaction.commit()?;
 
-        let update_transaction = transaction_manager.start_transaction()?;
+        let update_transaction = transaction_manager.start_transaction(None)?;
         let updated_tuple = Tuple::new(vec![Value::Integer(42)]);
         let result = table.update_tuple((1, 0), &updated_tuple, &update_transaction)?;
         assert_eq!(result, HeapTupleUpdateResult::Ok);
         update_transaction.commit()?;
 
-        let select_transaction = transaction_manager.start_transaction()?;
+        let select_transaction = transaction_manager.start_transaction(None)?;
         let tuples = table
             .iter(&select_transaction)?
             .collect::<Result<Vec<_>>>()?;
@@ -695,17 +695,17 @@ mod tests {
         let table = Table::new(1, &buffer_manager, schema);
         let tuple = Tuple::new(vec![Value::Integer(17)]);
 
-        let insert_transaction = transaction_manager.start_transaction()?;
+        let insert_transaction = transaction_manager.start_transaction(None)?;
         table.insert_tuple(&tuple, &insert_transaction)?;
         insert_transaction.commit()?;
 
-        let update_transaction = transaction_manager.start_transaction()?;
+        let update_transaction = transaction_manager.start_transaction(None)?;
         let updated_tuple = Tuple::new(vec![Value::Integer(21)]);
         let result = table.update_tuple((1, 0), &updated_tuple, &update_transaction)?;
         assert_eq!(result, HeapTupleUpdateResult::Ok);
         update_transaction.commit()?;
 
-        let update_transaction = transaction_manager.start_transaction()?;
+        let update_transaction = transaction_manager.start_transaction(None)?;
         let updated_tuple = Tuple::new(vec![Value::Integer(42)]);
         let result = table.update_tuple((1, 0), &updated_tuple, &update_transaction)?;
         assert_eq!(result, HeapTupleUpdateResult::Updated((1, 1)));

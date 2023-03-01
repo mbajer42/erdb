@@ -671,7 +671,7 @@ mod tests {
             ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
             ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
         ];
-        let transaction = transaction_manager.start_transaction().unwrap();
+        let transaction = transaction_manager.start_transaction(None).unwrap();
         catalog
             .create_table("accounts", columns, &transaction)
             .unwrap();
@@ -722,7 +722,7 @@ mod tests {
             ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
             ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
         ];
-        let transaction = transaction_manager.start_transaction().unwrap();
+        let transaction = transaction_manager.start_transaction(None).unwrap();
         catalog
             .create_table("accounts", columns, &transaction)
             .unwrap();
@@ -775,7 +775,7 @@ mod tests {
             0,
             true,
         )];
-        let transaction = transaction_manager.start_transaction().unwrap();
+        let transaction = transaction_manager.start_transaction(None).unwrap();
         catalog
             .create_table("accounts", columns, &transaction)
             .unwrap();

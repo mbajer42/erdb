@@ -153,14 +153,14 @@ fn handle_sql_statement<'a, 'b>(
             }
             writer.write_all("Table created".as_bytes())?;
         }
-        Statement::StartTransaction => {
+        Statement::StartTransaction { isolation_level } => {
             if let Some(transaction) = transaction {
                 if !transaction.has_ended() && !transaction.auto_commit() {
                     return Err(Error::msg("A transaction is already in progress. Commit or abort it first. Nested transactions are not supported."));
                 }
             }
             let new_transaction = transaction_manager
-                .start_transaction()
+                .start_transaction(isolation_level)
                 .with_context(|| "Could not start transaction")?;
             *transaction = Some(new_transaction);
             writer.write_all("transaction started".as_bytes())?;

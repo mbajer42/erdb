@@ -8,6 +8,7 @@ use self::ast::{
     Statement, TableNode, UnaryOperator,
 };
 use self::token::{tokenize, Keyword, Token};
+use crate::concurrency::IsolationLevel;
 
 pub mod ast;
 mod token;
@@ -148,7 +149,28 @@ impl Parser {
 
     fn parse_start_transaction(&mut self) -> Result<Statement> {
         self.expect(Token::Keyword(Keyword::Transaction))?;
-        Ok(Statement::StartTransaction)
+
+        let isolation_level = if self.peek_token() == &Token::Keyword(Keyword::Isolation) {
+            self.next_token();
+            self.expect(Token::Keyword(Keyword::Level))?;
+            match self.next_token() {
+                Token::Keyword(Keyword::Read) => {
+                    self.expect(Token::Keyword(Keyword::Committed))?;
+                    Some(IsolationLevel::ReadCommitted)
+                }
+                Token::Keyword(Keyword::Repeatable) => {
+                    self.expect(Token::Keyword(Keyword::Read))?;
+                    Some(IsolationLevel::RepeatableRead)
+                }
+                found => self.wrong_token(
+                    "an isolation level (REPEATABLE READ or READ COMMITTED)",
+                    found,
+                )?,
+            }
+        } else {
+            None
+        };
+        Ok(Statement::StartTransaction { isolation_level })
     }
 
     fn parse_insert(&mut self) -> Result<Statement> {

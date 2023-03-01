@@ -1,9 +1,9 @@
-use anyhow::Result;
+use anyhow::{Error, Result};
 use lazy_static::lazy_static;
 
 use super::Executor;
 use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
-use crate::concurrency::Transaction;
+use crate::concurrency::{IsolationLevel, Transaction};
 use crate::storage::heap::table::{HeapTupleUpdateResult, Table};
 use crate::storage::TupleId;
 use crate::tuple::value::Value;
@@ -50,17 +50,29 @@ impl<'a> DeleteExecutor<'a> {
                     self.tuples_deleted += 1;
                     return Ok(());
                 }
-                HeapTupleUpdateResult::Deleted | HeapTupleUpdateResult::SelfUpdated => {
-                    return Ok(())
-                }
+                HeapTupleUpdateResult::Deleted => match self.transaction.isolation_level() {
+                    IsolationLevel::ReadCommitted => return Ok(()),
+                    IsolationLevel::RepeatableRead => {
+                        return Err(Error::msg("Could not serialize due to concurrent update"))
+                    }
+                },
+                HeapTupleUpdateResult::SelfUpdated => return Ok(()),
                 HeapTupleUpdateResult::Updated(updated_tuple_id) => {
-                    // tuple was updated, fetch the updated tuple, re-evaluate it and if still meets the criteria, try to delete it again
-                    let tuple = self.table.fetch_tuple(updated_tuple_id)?;
-                    if self.child.re_evaluate_tuple(&tuple) {
-                        tuple_id = updated_tuple_id;
-                        continue;
-                    } else {
-                        return Ok(());
+                    match self.transaction.isolation_level() {
+                        IsolationLevel::ReadCommitted => {
+                            // tuple was updated, fetch the updated tuple,
+                            // re-evaluate it and if still meets the criteria try to delete it again
+                            let tuple = self.table.fetch_tuple(updated_tuple_id)?;
+                            if self.child.re_evaluate_tuple(&tuple) {
+                                tuple_id = updated_tuple_id;
+                                continue;
+                            } else {
+                                return Ok(());
+                            }
+                        }
+                        IsolationLevel::RepeatableRead => {
+                            return Err(Error::msg("Could not serialize due to concurrent update"))
+                        }
                     }
                 }
                 _ => unreachable!(),

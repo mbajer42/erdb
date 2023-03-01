@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{Error, Result};
 use lazy_static::lazy_static;
 
 use super::Executor;
 use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
-use crate::concurrency::Transaction;
+use crate::concurrency::{IsolationLevel, Transaction};
 use crate::planner::physical_plan::Expr;
 use crate::storage::heap::table::{HeapTupleUpdateResult, Table};
 use crate::storage::TupleId;
@@ -71,16 +71,27 @@ impl<'a> UpdateExecutor<'a> {
                     self.tuples_updated += 1;
                     return Ok(());
                 }
-                HeapTupleUpdateResult::Deleted | HeapTupleUpdateResult::SelfUpdated => {
-                    return Ok(())
-                }
+                HeapTupleUpdateResult::Deleted => match self.transaction.isolation_level() {
+                    IsolationLevel::ReadCommitted => return Ok(()),
+                    IsolationLevel::RepeatableRead => {
+                        return Err(Error::msg("Could not serialize due to concurrent update"))
+                    }
+                },
+                HeapTupleUpdateResult::SelfUpdated => return Ok(()),
                 HeapTupleUpdateResult::Updated(updated_tuple_id) => {
-                    tuple_id = updated_tuple_id;
-                    tuple = self.table.fetch_tuple(tuple_id)?;
-                    if self.child.re_evaluate_tuple(&tuple) {
-                        continue;
-                    } else {
-                        return Ok(());
+                    match self.transaction.isolation_level() {
+                        IsolationLevel::ReadCommitted => {
+                            tuple_id = updated_tuple_id;
+                            tuple = self.table.fetch_tuple(tuple_id)?;
+                            if self.child.re_evaluate_tuple(&tuple) {
+                                continue;
+                            } else {
+                                return Ok(());
+                            }
+                        }
+                        IsolationLevel::RepeatableRead => {
+                            return Err(Error::msg("Could not serialize due to concurrent update"))
+                        }
                     }
                 }
                 _ => unreachable!(),
@@ -137,7 +148,10 @@ impl<'a> Executor for UpdateExecutor<'a> {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Error;
+
     use crate::catalog::schema::{ColumnDefinition, TypeId};
+    use crate::concurrency::IsolationLevel;
     use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
     use crate::tuple::value::Value;
     use crate::tuple::Tuple;
@@ -181,5 +195,51 @@ mod tests {
         ];
 
         assert_eq!(expected_result, result);
+    }
+
+    #[test]
+    fn repeatable_read_updates_fail_on_concurrent_updates() {
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        execution_test_context
+            .create_table(
+                "numbers",
+                vec![ColumnDefinition::new(
+                    TypeId::Integer,
+                    "number".to_owned(),
+                    0,
+                    true,
+                )],
+            )
+            .unwrap();
+
+        let insert_statement = "insert into numbers values (1), (2), (3)";
+        execution_test_context
+            .execute_query(insert_statement)
+            .unwrap();
+
+        let mut update_transaction = execution_test_context
+            .transaction_manager
+            .start_transaction(Some(IsolationLevel::RepeatableRead))
+            .unwrap();
+
+        let update_statement = "update numbers set number = 4 where number = 1";
+        execution_test_context
+            .execute_query(update_statement)
+            .unwrap();
+
+        execution_test_context
+            .transaction_manager
+            .refresh_transaction(&mut update_transaction)
+            .unwrap();
+
+        let result = execution_test_context
+            .execute_query_with_transaction(update_statement, &update_transaction);
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap().root_cause().to_string(),
+            "Could not serialize due to concurrent update".to_owned()
+        );
     }
 }
