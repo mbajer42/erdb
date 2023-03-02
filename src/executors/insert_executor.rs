@@ -89,6 +89,7 @@ impl<'a> Executor for InsertExecutor<'a> {
 #[cfg(test)]
 mod tests {
     use crate::catalog::schema::{ColumnDefinition, TypeId};
+    use crate::concurrency::IsolationLevel;
     use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
 
     #[test]
@@ -129,5 +130,47 @@ mod tests {
         let expected_numbers = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
         assert_eq!(result, expected_numbers);
+    }
+
+    #[test]
+    fn repeatable_read_sees_own_inserted_values() {
+        let empty_test_context = EmptyTestContext::new();
+        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        execution_test_context
+            .create_table(
+                "numbers",
+                vec![ColumnDefinition::new(
+                    TypeId::Integer,
+                    "number".to_owned(),
+                    0,
+                    true,
+                )],
+            )
+            .unwrap();
+
+        let mut insert_transaction = execution_test_context
+            .transaction_manager
+            .start_transaction(Some(IsolationLevel::RepeatableRead))
+            .unwrap();
+        execution_test_context
+            .execute_query_with_transaction(
+                "insert into numbers values (1), (2), (3)",
+                &insert_transaction,
+            )
+            .unwrap();
+        execution_test_context
+            .transaction_manager
+            .refresh_transaction(&mut insert_transaction)
+            .unwrap();
+
+        let mut rows = execution_test_context
+            .execute_query_with_transaction("select * from numbers", &insert_transaction)
+            .unwrap()
+            .iter()
+            .map(|tuple| tuple.values[0].as_i32())
+            .collect::<Vec<_>>();
+        rows.sort();
+
+        assert_eq!(rows, vec![1, 2, 3]);
     }
 }

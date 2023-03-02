@@ -148,7 +148,6 @@ impl<'a> Executor for UpdateExecutor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Error;
 
     use crate::catalog::schema::{ColumnDefinition, TypeId};
     use crate::concurrency::IsolationLevel;

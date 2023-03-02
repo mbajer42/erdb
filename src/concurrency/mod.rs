@@ -254,18 +254,20 @@ impl<'a> TransactionManager<'a> {
     }
 
     pub fn refresh_transaction(&self, transaction: &mut Transaction) -> Result<()> {
+        if transaction.command_id == u8::MAX {
+            return Err(Error::msg(format!("It's currently not possible to run more than {} statements in a single transaction", u8::MAX)));
+        } else {
+            transaction.command_id += 1;
+        }
+
         if transaction.isolation_level == IsolationLevel::RepeatableRead {
             return Ok(());
         }
         let alive_tids = self.alive_tids.read().unwrap();
         transaction.alive_tids = alive_tids.clone();
         transaction.tid_max = self.next_tid.load(Ordering::Relaxed);
-        if transaction.command_id == u8::MAX {
-            Err(Error::msg(format!("It's currently not possible to run more than {} statements in a single transaction", u8::MAX)))
-        } else {
-            transaction.command_id += 1;
-            Ok(())
-        }
+
+        Ok(())
     }
 
     fn create_transaction(
