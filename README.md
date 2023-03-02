@@ -2,7 +2,7 @@
 
 A relational database just for fun and learning purposes. Storage layout is Postgres inspired. Work is still very much in progress. Quite a lot of things are missing.
 
-Currently focusing on transactions (using MVCC). READ COMMITTED is already implemented (READ UNCOMITTED will never work, currently working on REPEATABLE READ, maybe SERIALIZABLE some day).
+Transaction isolation is achieved by MVCC. READ COMMITTED and REPEATABLE READ are already implemented (READ UNCOMMITTED will never work, maybe SERIALIZABLE some day).
 
 ### Examples of READ COMMITTED transactions (default isolation level)
 #### SELECT
@@ -15,3 +15,7 @@ Currently focusing on transactions (using MVCC). READ COMMITTED is already imple
 
 #### UPDATE
 ![Example of update transactions](img/transaction_update.png)
+
+### Example of REPEATABLE READ transaction
+
+![Example of repeatable read update transaction](img/transaction_repeatable_read.png)
