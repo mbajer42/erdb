@@ -16,11 +16,11 @@ use logical_plan::LogicalPlan;
 use self::logical_plan::{LogicalExpr, TableReference};
 
 pub struct Analyzer<'a> {
-    catalog: &'a Catalog<'a>,
+    catalog: &'a Catalog,
 }
 
 impl<'a> Analyzer<'a> {
-    pub fn new(catalog: &'a Catalog<'a>) -> Self {
+    pub fn new(catalog: &'a Catalog) -> Self {
         Self { catalog }
     }
 
@@ -666,7 +666,8 @@ mod tests {
             TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
         let bootstrap_transaction = transaction_manager.bootstrap();
 
-        let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction).unwrap();
+        let catalog =
+            Catalog::new(Arc::clone(&buffer_manager), true, &bootstrap_transaction).unwrap();
         let columns = vec![
             ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
             ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
@@ -716,7 +717,8 @@ mod tests {
             TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
         let bootstrap_transaction = transaction_manager.bootstrap();
 
-        let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction).unwrap();
+        let catalog =
+            Catalog::new(Arc::clone(&buffer_manager), true, &bootstrap_transaction).unwrap();
         let columns = vec![
             ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
             ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
@@ -766,7 +768,8 @@ mod tests {
             TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
         let bootstrap_transaction = transaction_manager.bootstrap();
 
-        let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction).unwrap();
+        let catalog =
+            Catalog::new(Arc::clone(&buffer_manager), true, &bootstrap_transaction).unwrap();
         let columns = vec![ColumnDefinition::new(
             TypeId::Integer,
             "id".to_owned(),
@@ -846,7 +849,8 @@ mod tests {
         ";
         let statement = parse_sql(sql).unwrap();
 
-        let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction).unwrap();
+        let catalog =
+            Catalog::new(Arc::clone(&buffer_manager), true, &bootstrap_transaction).unwrap();
         let analyzer = Analyzer::new(&catalog);
         let query = analyzer.analyze(statement).unwrap();
         let expected_output_schema = Schema::new(vec![

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::Result;
 
@@ -41,13 +42,13 @@ pub trait Executor {
 }
 
 pub struct ExecutorFactory<'a> {
-    buffer_manager: &'a BufferManager,
-    table_id_to_table: HashMap<TableId, Table<'a>>,
+    buffer_manager: Arc<BufferManager>,
+    table_id_to_table: HashMap<TableId, Table>,
     transaction: &'a Transaction<'a>,
 }
 
 impl<'a> ExecutorFactory<'a> {
-    pub fn new(buffer_manager: &'a BufferManager, transaction: &'a Transaction) -> Self {
+    pub fn new(buffer_manager: Arc<BufferManager>, transaction: &'a Transaction) -> Self {
         Self {
             buffer_manager,
             table_id_to_table: HashMap::new(),
@@ -188,7 +189,7 @@ impl<'a> ExecutorFactory<'a> {
     fn insert_table(&mut self, table_id: TableId, schema: Schema) {
         self.table_id_to_table
             .entry(table_id)
-            .or_insert_with(|| Table::new(table_id, self.buffer_manager, schema));
+            .or_insert_with(|| Table::new(table_id, Arc::clone(&self.buffer_manager), schema));
     }
 
     fn create_seq_scan_executor(&'a self, table_id: TableId) -> Result<SeqScanExecutor<'a>> {
@@ -244,23 +245,22 @@ mod tests {
 
     pub struct ExecutionTestContext<'a> {
         pub context: &'a EmptyTestContext,
-        buffer_manager: &'a BufferManager,
-        catalog: Catalog<'a>,
+        catalog: Catalog,
     }
 
     impl<'a> ExecutionTestContext<'a> {
         pub fn new(context: &'a EmptyTestContext) -> Self {
-            let buffer_manager = &context.buffer_manager;
             let bootstrap_transaction = context.transaction_manager.bootstrap();
-            let catalog = Catalog::new(buffer_manager, true, &bootstrap_transaction).unwrap();
+            let catalog = Catalog::new(
+                Arc::clone(&context.buffer_manager),
+                true,
+                &bootstrap_transaction,
+            )
+            .unwrap();
             bootstrap_transaction.commit().unwrap();
             drop(bootstrap_transaction);
 
-            Self {
-                context,
-                buffer_manager,
-                catalog,
-            }
+            Self { context, catalog }
         }
 
         pub fn create_table(&self, table_name: &str, columns: Vec<ColumnDefinition>) -> Result<()> {
@@ -288,7 +288,8 @@ mod tests {
             let query = analyzer.analyze(query)?;
             let planner = Planner::new();
             let plan = planner.prepare_logical_plan(query)?;
-            let mut executor_factory = ExecutorFactory::new(self.buffer_manager, transaction);
+            let mut executor_factory =
+                ExecutorFactory::new(Arc::clone(&self.context.buffer_manager), transaction);
             let mut executor = executor_factory.create_executor(plan)?;
             let mut tuples = vec![];
             while let Some(tuple) = executor.next().transpose()? {

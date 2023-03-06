@@ -1,5 +1,6 @@
 use std::collections::{hash_map, HashMap};
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::Arc;
 
 use anyhow::{Error, Result};
 use dashmap::mapref::entry::Entry;
@@ -36,30 +37,30 @@ lazy_static! {
 }
 
 // TODO: The catalog defies currently MVCC. Fix it.
-pub struct Catalog<'a> {
-    buffer_manager: &'a BufferManager,
+pub struct Catalog {
+    buffer_manager: Arc<BufferManager>,
     next_table_id: AtomicU16,
-    tables_table: Table<'a>,
-    columns_table: Table<'a>,
+    tables_table: Table,
+    columns_table: Table,
     table_name_to_id: DashMap<String, TableId>,
     table_id_to_schema: DashMap<TableId, Schema>,
 }
 
-impl<'a> Catalog<'a> {
+impl Catalog {
     pub fn new(
-        buffer_manager: &'a BufferManager,
+        buffer_manager: Arc<BufferManager>,
         bootstrap: bool,
         bootstrap_transaction: &Transaction,
     ) -> Result<Self> {
         let tables_table = Table::new(
             CATALOG_TABLES_TABLE_ID,
-            buffer_manager,
+            Arc::clone(&buffer_manager),
             CATALOG_TABLES_SCHEMA.clone(),
         );
 
         let columns_table = Table::new(
             CATALOG_COLUMNS_TABLE_ID,
-            buffer_manager,
+            Arc::clone(&buffer_manager),
             CATALOG_COLUMNS_SCHEMA.clone(),
         );
 
@@ -259,9 +260,9 @@ mod tests {
             TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
         let bootstrap_transaction = transaction_manager.bootstrap();
 
-        let _ = Catalog::new(&buffer_manager, true, &bootstrap_transaction)?;
+        let _ = Catalog::new(Arc::clone(&buffer_manager), true, &bootstrap_transaction)?;
         bootstrap_transaction.commit()?;
-        let catalog = Catalog::new(&buffer_manager, false, &bootstrap_transaction)?;
+        let catalog = Catalog::new(Arc::clone(&buffer_manager), false, &bootstrap_transaction)?;
 
         let expected_tables_schema: Option<Schema> = Some(CATALOG_TABLES_SCHEMA.clone());
         assert_eq!(
@@ -286,7 +287,7 @@ mod tests {
         let transaction_manager =
             TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
         let bootstrap_transaction = transaction_manager.bootstrap();
-        let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction)?;
+        let catalog = Catalog::new(Arc::clone(&buffer_manager), true, &bootstrap_transaction)?;
         bootstrap_transaction.commit().unwrap();
 
         let expected_columns = vec![

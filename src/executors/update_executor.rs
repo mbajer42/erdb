@@ -22,7 +22,7 @@ lazy_static! {
 }
 
 pub struct UpdateExecutor<'a> {
-    table: &'a Table<'a>,
+    table: &'a Table,
     child: Box<dyn Executor + 'a>,
     transaction: &'a Transaction<'a>,
     set_expressions: HashMap<usize, Expr>,
@@ -32,7 +32,7 @@ pub struct UpdateExecutor<'a> {
 
 impl<'a> UpdateExecutor<'a> {
     pub fn new(
-        table: &'a Table<'a>,
+        table: &'a Table,
         child: Box<dyn Executor + 'a>,
         set_expressions: HashMap<usize, Expr>,
         transaction: &'a Transaction,

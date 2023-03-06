@@ -137,7 +137,7 @@ fn get_transaction<'a, 'b>(
 fn handle_sql_statement<'a, 'b>(
     writer: &mut BufWriter<&TcpStream>,
     sql: &str,
-    buffer_manager: &BufferManager,
+    buffer_manager: Arc<BufferManager>,
     transaction_manager: &'a TransactionManager,
     catalog: &Catalog,
     transaction: &'b mut Option<Transaction<'a>>,
@@ -197,7 +197,7 @@ fn handle_sql_statement<'a, 'b>(
 fn handle_client(
     mut stream: TcpStream,
     catalog: &Catalog,
-    buffer_manager: &BufferManager,
+    buffer_manager: Arc<BufferManager>,
     transaction_manager: &TransactionManager,
 ) -> Result<()> {
     stream.write_all("Welcome to erdb".as_bytes())?;
@@ -233,7 +233,7 @@ fn handle_client(
                 match handle_sql_statement(
                     &mut writer,
                     &statement,
-                    buffer_manager,
+                    Arc::clone(&buffer_manager),
                     transaction_manager,
                     catalog,
                     &mut transaction,
@@ -268,8 +268,12 @@ fn main() -> Result<()> {
         .with_context(|| "Failed to create transaction manager")?;
     let bootstrap_transaction = transaction_manager.bootstrap();
 
-    let catalog = Catalog::new(&buffer_manager, config.new, &bootstrap_transaction)
-        .with_context(|| "Failed to create catalog")?;
+    let catalog = Catalog::new(
+        Arc::clone(&buffer_manager),
+        config.new,
+        &bootstrap_transaction,
+    )
+    .with_context(|| "Failed to create catalog")?;
 
     if config.new {
         bootstrap_transaction
@@ -280,11 +284,11 @@ fn main() -> Result<()> {
     let listener = TcpListener::bind(("localhost", config.port))?;
 
     thread::scope(|scope| {
-        let buffer_manager = &buffer_manager;
         let transaction_manager = &transaction_manager;
         let catalog = &catalog;
 
         for stream in listener.incoming() {
+            let buffer_manager = Arc::clone(&buffer_manager);
             match stream {
                 Ok(stream) => {
                     scope.spawn(move || {

@@ -19,7 +19,7 @@ lazy_static! {
 }
 
 pub struct DeleteExecutor<'a> {
-    table: &'a Table<'a>,
+    table: &'a Table,
     child: Box<dyn Executor + 'a>,
     transaction: &'a Transaction<'a>,
     tuples_deleted: i32,
@@ -28,7 +28,7 @@ pub struct DeleteExecutor<'a> {
 
 impl<'a> DeleteExecutor<'a> {
     pub fn new(
-        table: &'a Table<'a>,
+        table: &'a Table,
         child: Box<dyn Executor + 'a>,
         transaction: &'a Transaction,
     ) -> Self {

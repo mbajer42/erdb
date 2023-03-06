@@ -1,4 +1,5 @@
 use std::ops::DerefMut;
+use std::sync::Arc;
 
 use anyhow::{Error, Result};
 use lazy_static::lazy_static;
@@ -85,12 +86,12 @@ pub struct HeapTupleIterator<'a> {
     curr_page_no: PageNo,
     max_page_no: PageNo,
     curr_slot: u8,
-    table: &'a Table<'a>,
+    table: &'a Table,
     transaction: &'a Transaction<'a>,
 }
 
 impl<'a> HeapTupleIterator<'a> {
-    fn new(max_page_no: PageNo, table: &'a Table<'a>, transaction: &'a Transaction<'a>) -> Self {
+    fn new(max_page_no: PageNo, table: &'a Table, transaction: &'a Transaction<'a>) -> Self {
         Self {
             curr_page_no: 1,
             max_page_no,
@@ -166,14 +167,14 @@ fn insert_tuple(
 
     Some(slot)
 }
-pub struct Table<'a> {
+pub struct Table {
     table_id: TableId,
-    buffer_manager: &'a BufferManager,
+    buffer_manager: Arc<BufferManager>,
     schema: Schema,
 }
 
-impl<'a> Table<'a> {
-    pub fn new(table_id: TableId, buffer_manager: &'a BufferManager, schema: Schema) -> Self {
+impl Table {
+    pub fn new(table_id: TableId, buffer_manager: Arc<BufferManager>, schema: Schema) -> Self {
         Self {
             table_id,
             buffer_manager,
@@ -405,7 +406,7 @@ impl<'a> Table<'a> {
         }
     }
 
-    pub fn iter(&'a self, transaction: &'a Transaction) -> Result<HeapTupleIterator<'a>> {
+    pub fn iter<'a>(&'a self, transaction: &'a Transaction<'a>) -> Result<HeapTupleIterator<'a>> {
         let highest_page_no = self.buffer_manager.highest_page_no(self.table_id)?;
         Ok(HeapTupleIterator::new(highest_page_no, self, transaction))
     }
@@ -453,7 +454,7 @@ mod tests {
             ColumnDefinition::new(TypeId::Integer, "nullable_integer".to_owned(), 3, true),
         ]);
 
-        let table = Table::new(1, &buffer_manager, schema.clone());
+        let table = Table::new(1, Arc::clone(&buffer_manager), schema.clone());
 
         let tuples = (0..10)
             .map(|i| {
@@ -504,7 +505,7 @@ mod tests {
             true,
         )]);
 
-        let table = Table::new(1, &buffer_manager, schema);
+        let table = Table::new(1, Arc::clone(&buffer_manager), schema);
         let tuple = Tuple::new(vec![Value::Integer(42)]);
 
         let insert_transaction = transaction_manager.start_transaction(None)?;
@@ -538,7 +539,7 @@ mod tests {
             true,
         )]);
 
-        let table = Arc::new(Table::new(1, &buffer_manager, schema));
+        let table = Arc::new(Table::new(1, Arc::clone(&buffer_manager), schema));
         let tuple = Tuple::new(vec![Value::Integer(42)]);
 
         let insert_transaction = transaction_manager.start_transaction(None)?;
@@ -592,7 +593,7 @@ mod tests {
             true,
         )]);
 
-        let table = Arc::new(Table::new(1, &buffer_manager, schema));
+        let table = Arc::new(Table::new(1, Arc::clone(&buffer_manager), schema));
         let tuple = Tuple::new(vec![Value::Integer(42)]);
 
         let insert_transaction = transaction_manager.start_transaction(None)?;
@@ -646,7 +647,7 @@ mod tests {
             true,
         )]);
 
-        let table = Table::new(1, &buffer_manager, schema);
+        let table = Table::new(1, Arc::clone(&buffer_manager), schema);
         let tuple = Tuple::new(vec![Value::Integer(21)]);
 
         let insert_transaction = transaction_manager.start_transaction(None)?;
@@ -685,7 +686,7 @@ mod tests {
             true,
         )]);
 
-        let table = Table::new(1, &buffer_manager, schema);
+        let table = Table::new(1, Arc::clone(&buffer_manager), schema);
         let tuple = Tuple::new(vec![Value::Integer(17)]);
 
         let insert_transaction = transaction_manager.start_transaction(None)?;

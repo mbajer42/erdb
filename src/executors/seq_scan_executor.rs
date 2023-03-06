@@ -7,13 +7,13 @@ use crate::storage::heap::table::{HeapTupleIterator, Table};
 use crate::tuple::Tuple;
 
 pub struct SeqScanExecutor<'a> {
-    table: &'a Table<'a>,
+    table: &'a Table,
     table_iter: HeapTupleIterator<'a>,
     transaction: &'a Transaction<'a>,
 }
 
 impl<'a> SeqScanExecutor<'a> {
-    pub fn new(table: &'a Table<'a>, transaction: &'a Transaction<'a>) -> Result<Self> {
+    pub fn new(table: &'a Table, transaction: &'a Transaction<'a>) -> Result<Self> {
         Ok(Self {
             table,
             transaction,

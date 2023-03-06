@@ -17,7 +17,7 @@ lazy_static! {
     )]);
 }
 pub struct InsertExecutor<'a> {
-    table: &'a Table<'a>,
+    table: &'a Table,
     child: Box<dyn Executor + 'a>,
     transaction: &'a Transaction<'a>,
     tuples_inserted: i32,
@@ -26,7 +26,7 @@ pub struct InsertExecutor<'a> {
 
 impl<'a> InsertExecutor<'a> {
     pub fn new(
-        table: &'a Table<'a>,
+        table: &'a Table,
         child: Box<dyn Executor + 'a>,
         transaction: &'a Transaction,
     ) -> Self {
