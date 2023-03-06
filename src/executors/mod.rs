@@ -222,59 +222,43 @@ mod tests {
     use crate::tuple::Tuple;
 
     #[allow(dead_code)]
-    pub struct EmptyTestContext {
+    pub struct TestDb {
         data_dir: TempDir,
         buffer_manager: Arc<BufferManager>,
+        catalog: Catalog,
         pub transaction_manager: TransactionManager,
     }
 
-    impl EmptyTestContext {
+    impl TestDb {
         pub fn new() -> Self {
             let data_dir = tempdir().unwrap();
             let file_manager = FileManager::new(data_dir.path()).unwrap();
             let buffer_manager = Arc::new(BufferManager::new(file_manager, 2));
             let transaction_manager =
                 TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
+
+            let bootstrap_transaction = transaction_manager.bootstrap();
+            let catalog =
+                Catalog::new(Arc::clone(&buffer_manager), true, &bootstrap_transaction).unwrap();
+            bootstrap_transaction.commit().unwrap();
+            drop(bootstrap_transaction);
             Self {
                 data_dir,
                 buffer_manager,
+                catalog,
                 transaction_manager,
             }
         }
-    }
-
-    pub struct ExecutionTestContext<'a> {
-        pub context: &'a EmptyTestContext,
-        catalog: Catalog,
-    }
-
-    impl<'a> ExecutionTestContext<'a> {
-        pub fn new(context: &'a EmptyTestContext) -> Self {
-            let bootstrap_transaction = context.transaction_manager.bootstrap();
-            let catalog = Catalog::new(
-                Arc::clone(&context.buffer_manager),
-                true,
-                &bootstrap_transaction,
-            )
-            .unwrap();
-            bootstrap_transaction.commit().unwrap();
-            drop(bootstrap_transaction);
-
-            Self { context, catalog }
-        }
 
         pub fn create_table(&self, table_name: &str, columns: Vec<ColumnDefinition>) -> Result<()> {
-            let transaction = self.context.transaction_manager.start_transaction(None)?;
+            let transaction = self.transaction_manager.start_transaction(None)?;
             self.catalog
                 .create_table(table_name, columns, &transaction)?;
             transaction.commit()
         }
 
         pub fn execute_query(&self, sql: &str) -> Result<Vec<Tuple>> {
-            let transaction = self
-                .context
-                .transaction_manager
-                .start_implicit_transaction()?;
+            let transaction = self.transaction_manager.start_implicit_transaction()?;
             self.execute_query_with_transaction(sql, &transaction)
         }
 
@@ -289,7 +273,7 @@ mod tests {
             let planner = Planner::new();
             let plan = planner.prepare_logical_plan(query)?;
             let mut executor_factory =
-                ExecutorFactory::new(Arc::clone(&self.context.buffer_manager), transaction);
+                ExecutorFactory::new(Arc::clone(&self.buffer_manager), transaction);
             let mut executor = executor_factory.create_executor(plan)?;
             let mut tuples = vec![];
             while let Some(tuple) = executor.next().transpose()? {
@@ -301,9 +285,8 @@ mod tests {
 
     #[test]
     fn can_only_see_committed_tuples() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
-        execution_test_context
+        let test_db = TestDb::new();
+        test_db
             .create_table(
                 "numbers",
                 vec![ColumnDefinition::new(
@@ -315,26 +298,18 @@ mod tests {
             )
             .unwrap();
 
-        let insert_transaction = execution_test_context
-            .context
-            .transaction_manager
-            .start_transaction(None)
-            .unwrap();
+        let insert_transaction = test_db.transaction_manager.start_transaction(None).unwrap();
         let insert_statement = "insert into numbers values (1), (2), (3)";
-        execution_test_context
+        test_db
             .execute_query_with_transaction(insert_statement, &insert_transaction)
             .unwrap();
 
         let select_numbers = "select * from numbers";
-        let tuples = execution_test_context
-            .execute_query(select_numbers)
-            .unwrap();
+        let tuples = test_db.execute_query(select_numbers).unwrap();
         assert!(tuples.is_empty());
 
         insert_transaction.commit().unwrap();
-        let tuples = execution_test_context
-            .execute_query(select_numbers)
-            .unwrap();
+        let tuples = test_db.execute_query(select_numbers).unwrap();
         assert_eq!(tuples.len(), 3);
     }
 }

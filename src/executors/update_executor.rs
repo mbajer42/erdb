@@ -151,15 +151,14 @@ mod tests {
 
     use crate::catalog::schema::{ColumnDefinition, TypeId};
     use crate::concurrency::IsolationLevel;
-    use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
+    use crate::executors::tests::TestDb;
     use crate::tuple::value::Value;
     use crate::tuple::Tuple;
 
     #[test]
     fn can_execute_update_statements() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
-        execution_test_context
+        let test_db = TestDb::new();
+        test_db
             .create_table(
                 "items",
                 vec![
@@ -170,12 +169,10 @@ mod tests {
             .unwrap();
 
         let insert_statement = "insert into items values ('foo', 0), ('bar', 2), ('baz', 3)";
-        execution_test_context
-            .execute_query(insert_statement)
-            .unwrap();
+        test_db.execute_query(insert_statement).unwrap();
 
         let update = "update items set count = 1 where name = 'foo'";
-        let result = execution_test_context
+        let result = test_db
             .execute_query(update)
             .unwrap()
             .iter()
@@ -184,7 +181,7 @@ mod tests {
         assert_eq!(vec![1], result);
 
         let select = "select * from items";
-        let mut result = execution_test_context.execute_query(select).unwrap();
+        let mut result = test_db.execute_query(select).unwrap();
         result.sort_by_key(|tuple| tuple.values()[1].as_i32());
 
         let expected_result = vec![
@@ -198,9 +195,8 @@ mod tests {
 
     #[test]
     fn repeatable_read_updates_fail_on_concurrent_updates() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
-        execution_test_context
+        let test_db = TestDb::new();
+        test_db
             .create_table(
                 "numbers",
                 vec![ColumnDefinition::new(
@@ -213,29 +209,22 @@ mod tests {
             .unwrap();
 
         let insert_statement = "insert into numbers values (1), (2), (3)";
-        execution_test_context
-            .execute_query(insert_statement)
-            .unwrap();
+        test_db.execute_query(insert_statement).unwrap();
 
-        let mut update_transaction = execution_test_context
-            .context
+        let mut update_transaction = test_db
             .transaction_manager
             .start_transaction(Some(IsolationLevel::RepeatableRead))
             .unwrap();
 
         let update_statement = "update numbers set number = 4 where number = 1";
-        execution_test_context
-            .execute_query(update_statement)
-            .unwrap();
+        test_db.execute_query(update_statement).unwrap();
 
-        execution_test_context
-            .context
+        test_db
             .transaction_manager
             .refresh_transaction(&mut update_transaction)
             .unwrap();
 
-        let result = execution_test_context
-            .execute_query_with_transaction(update_statement, &update_transaction);
+        let result = test_db.execute_query_with_transaction(update_statement, &update_transaction);
 
         assert!(result.is_err());
         assert_eq!(

@@ -130,13 +130,12 @@ impl<'a> Executor for DeleteExecutor<'a> {
 #[cfg(test)]
 mod tests {
     use crate::catalog::schema::{ColumnDefinition, TypeId};
-    use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
+    use crate::executors::tests::TestDb;
 
     #[test]
     fn can_execute_delete_statements() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
-        execution_test_context
+        let test_db = TestDb::new();
+        test_db
             .create_table(
                 "items",
                 vec![
@@ -147,12 +146,10 @@ mod tests {
             .unwrap();
 
         let insert_statement = "insert into items values ('foo', 0), ('bar', 2), ('baz', 0)";
-        execution_test_context
-            .execute_query(insert_statement)
-            .unwrap();
+        test_db.execute_query(insert_statement).unwrap();
 
         let delete = "delete from items where count = 0";
-        let result = execution_test_context
+        let result = test_db
             .execute_query(delete)
             .unwrap()
             .iter()

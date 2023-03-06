@@ -122,12 +122,12 @@ impl<'a> Executor for NestedLoopJoinExecutor<'a> {
 mod tests {
 
     use crate::catalog::schema::{ColumnDefinition, TypeId};
-    use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
+    use crate::executors::tests::TestDb;
     use crate::tuple::value::Value;
     use crate::tuple::Tuple;
 
-    fn prepare_tables(execution_test_context: &ExecutionTestContext) {
-        execution_test_context
+    fn prepare_tables(test_db: &TestDb) {
+        test_db
             .create_table(
                 "numbers",
                 vec![
@@ -137,7 +137,7 @@ mod tests {
             )
             .unwrap();
 
-        execution_test_context
+        test_db
             .create_table(
                 "strings",
                 vec![
@@ -148,24 +148,19 @@ mod tests {
             .unwrap();
 
         let insert_numbers = "insert into numbers values (1, 1), (2, 2), (3, 3), (4, 4)";
-        execution_test_context
-            .execute_query(insert_numbers)
-            .unwrap();
+        test_db.execute_query(insert_numbers).unwrap();
 
         let insert_strings = "insert into strings values (1, 'foo'), (2, 'bar'), (3, 'baz')";
-        execution_test_context
-            .execute_query(insert_strings)
-            .unwrap();
+        test_db.execute_query(insert_strings).unwrap();
     }
 
     #[test]
     fn can_execute_cross_joins() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
-        prepare_tables(&execution_test_context);
+        let test_db = TestDb::new();
+        prepare_tables(&test_db);
 
         let cross_join = "select number, string from numbers, strings";
-        let mut result = execution_test_context.execute_query(cross_join).unwrap();
+        let mut result = test_db.execute_query(cross_join).unwrap();
         result.sort_by_key(|tuple| {
             (
                 tuple.values()[0].as_i32(),
@@ -193,13 +188,12 @@ mod tests {
 
     #[test]
     fn conditions_on_cross_joins() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
-        prepare_tables(&execution_test_context);
+        let test_db = TestDb::new();
+        prepare_tables(&test_db);
 
         let cross_join =
             "select number, string from numbers, strings where numbers.id = strings.id";
-        let mut result = execution_test_context.execute_query(cross_join).unwrap();
+        let mut result = test_db.execute_query(cross_join).unwrap();
         result.sort_by_key(|tuple| (tuple.values()[0].as_i32()));
 
         let expected_result = vec![
@@ -213,12 +207,11 @@ mod tests {
 
     #[test]
     fn can_execute_inner_joins() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
-        prepare_tables(&execution_test_context);
+        let test_db = TestDb::new();
+        prepare_tables(&test_db);
 
         let inner_join = "select number, string from numbers n join strings s on n.id = s.id";
-        let mut result = execution_test_context.execute_query(inner_join).unwrap();
+        let mut result = test_db.execute_query(inner_join).unwrap();
         result.sort_by_key(|tuple| (tuple.values()[0].as_i32()));
 
         let expected_result = vec![
@@ -232,12 +225,11 @@ mod tests {
 
     #[test]
     fn can_execute_left_joins() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
-        prepare_tables(&execution_test_context);
+        let test_db = TestDb::new();
+        prepare_tables(&test_db);
 
         let left_join = "select number, string from numbers n left join strings s on n.id = s.id";
-        let mut result = execution_test_context.execute_query(left_join).unwrap();
+        let mut result = test_db.execute_query(left_join).unwrap();
         result.sort_by_key(|tuple| (tuple.values()[0].as_i32()));
 
         let expected_result = vec![
@@ -252,12 +244,11 @@ mod tests {
 
     #[test]
     fn can_execute_right_joins() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
-        prepare_tables(&execution_test_context);
+        let test_db = TestDb::new();
+        prepare_tables(&test_db);
 
         let right_join = "select string, number from strings s right join numbers n on n.id = s.id";
-        let mut result = execution_test_context.execute_query(right_join).unwrap();
+        let mut result = test_db.execute_query(right_join).unwrap();
         result.sort_by_key(|tuple| (tuple.values()[1].as_i32()));
 
         let expected_result = vec![

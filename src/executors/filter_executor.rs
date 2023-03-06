@@ -61,13 +61,12 @@ impl<'a> Executor for FilterExecutor<'a> {
 #[cfg(test)]
 mod tests {
     use crate::catalog::schema::{ColumnDefinition, TypeId};
-    use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
+    use crate::executors::tests::TestDb;
 
     #[test]
     fn can_execute_queries_with_filter_conditions() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
-        execution_test_context
+        let test_db = TestDb::new();
+        test_db
             .create_table(
                 "numbers",
                 vec![ColumnDefinition::new(
@@ -81,12 +80,10 @@ mod tests {
 
         let insert_statement =
             "insert into numbers values (1), (2), (3), (4), (5), (6), (7), (8), (9)";
-        execution_test_context
-            .execute_query(insert_statement)
-            .unwrap();
+        test_db.execute_query(insert_statement).unwrap();
 
         let select = "select number from numbers where number % 2 = 0";
-        let mut result = execution_test_context
+        let mut result = test_db
             .execute_query(select)
             .unwrap()
             .iter()

@@ -53,16 +53,12 @@ mod tests {
 
     use crate::catalog::schema::{ColumnDefinition, TypeId};
     use crate::concurrency::IsolationLevel;
-    use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
+    use crate::executors::tests::TestDb;
     use crate::parser::ast::BinaryOperator;
     use crate::tuple::value::Value;
 
-    fn execute_query_expect_single_tuple(
-        sql: &str,
-        execution_test_context: &ExecutionTestContext,
-        expected: Value,
-    ) {
-        let tuples = execution_test_context.execute_query(sql).unwrap();
+    fn execute_query_expect_single_tuple(sql: &str, test_db: &TestDb, expected: Value) {
+        let tuples = test_db.execute_query(sql).unwrap();
         assert_eq!(tuples.len(), 1);
         let values = tuples.get(0).unwrap().values();
         assert_eq!(values.len(), 1);
@@ -71,8 +67,7 @@ mod tests {
 
     #[test]
     fn can_execute_comparison_expressions() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        let test_db = TestDb::new();
 
         let arg_op_expected_result = [
             (Value::Integer(42), BinaryOperator::Eq, Value::Boolean(true)),
@@ -111,14 +106,13 @@ mod tests {
 
         for (arg, op, expected) in arg_op_expected_result {
             let sql = format!("select {} {} 42", arg, op);
-            execute_query_expect_single_tuple(&sql, &execution_test_context, expected);
+            execute_query_expect_single_tuple(&sql, &test_db, expected);
         }
     }
 
     #[test]
     fn can_execute_arithmetic_expressions() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        let test_db = TestDb::new();
 
         let left_op_right_result = vec![
             (
@@ -161,14 +155,13 @@ mod tests {
 
         for (left, op, right, expected) in left_op_right_result {
             let sql = format!("select {} {} {}", left, op, right);
-            execute_query_expect_single_tuple(&sql, &execution_test_context, expected);
+            execute_query_expect_single_tuple(&sql, &test_db, expected);
         }
     }
 
     #[test]
     fn can_execute_or_and_expressions() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
+        let test_db = TestDb::new();
         let left_op_right_result = vec![
             (
                 Value::Boolean(true),
@@ -204,15 +197,14 @@ mod tests {
 
         for (left, op, right, expected) in left_op_right_result {
             let sql = format!("select {} {} {}", left, op, right);
-            execute_query_expect_single_tuple(&sql, &execution_test_context, expected);
+            execute_query_expect_single_tuple(&sql, &test_db, expected);
         }
     }
 
     #[test]
     fn repeatable_read_selects_see_only_rows_committed_before_transaction() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
-        execution_test_context
+        let test_db = TestDb::new();
+        test_db
             .create_table(
                 "numbers",
                 vec![ColumnDefinition::new(
@@ -225,28 +217,22 @@ mod tests {
             .unwrap();
 
         let insert_statement = "insert into numbers values (1), (2), (3)";
-        execution_test_context
-            .execute_query(insert_statement)
-            .unwrap();
+        test_db.execute_query(insert_statement).unwrap();
 
-        let mut select_transaction = execution_test_context
-            .context
+        let mut select_transaction = test_db
             .transaction_manager
             .start_transaction(Some(IsolationLevel::RepeatableRead))
             .unwrap();
 
         let insert_statement = "insert into numbers values (4), (5)";
-        execution_test_context
-            .execute_query(insert_statement)
-            .unwrap();
+        test_db.execute_query(insert_statement).unwrap();
 
-        execution_test_context
-            .context
+        test_db
             .transaction_manager
             .refresh_transaction(&mut select_transaction)
             .unwrap();
         let select_statement = "select * from numbers";
-        let mut result = execution_test_context
+        let mut result = test_db
             .execute_query_with_transaction(select_statement, &select_transaction)
             .unwrap()
             .into_iter()
@@ -259,9 +245,8 @@ mod tests {
 
     #[test]
     fn read_committed_sees_all_committed_rows() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
-        execution_test_context
+        let test_db = TestDb::new();
+        test_db
             .create_table(
                 "numbers",
                 vec![ColumnDefinition::new(
@@ -274,28 +259,22 @@ mod tests {
             .unwrap();
 
         let insert_statement = "insert into numbers values (1), (2), (3)";
-        execution_test_context
-            .execute_query(insert_statement)
-            .unwrap();
+        test_db.execute_query(insert_statement).unwrap();
 
-        let mut select_transaction = execution_test_context
-            .context
+        let mut select_transaction = test_db
             .transaction_manager
             .start_transaction(Some(IsolationLevel::ReadCommitted))
             .unwrap();
 
         let insert_statement = "insert into numbers values (4), (5)";
-        execution_test_context
-            .execute_query(insert_statement)
-            .unwrap();
+        test_db.execute_query(insert_statement).unwrap();
 
-        execution_test_context
-            .context
+        test_db
             .transaction_manager
             .refresh_transaction(&mut select_transaction)
             .unwrap();
         let select_statement = "select * from numbers";
-        let mut result = execution_test_context
+        let mut result = test_db
             .execute_query_with_transaction(select_statement, &select_transaction)
             .unwrap()
             .into_iter()

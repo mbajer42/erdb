@@ -90,13 +90,12 @@ impl<'a> Executor for InsertExecutor<'a> {
 mod tests {
     use crate::catalog::schema::{ColumnDefinition, TypeId};
     use crate::concurrency::IsolationLevel;
-    use crate::executors::tests::{EmptyTestContext, ExecutionTestContext};
+    use crate::executors::tests::TestDb;
 
     #[test]
     fn can_insert_from_own_table() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
-        execution_test_context
+        let test_db = TestDb::new();
+        test_db
             .create_table(
                 "numbers",
                 vec![ColumnDefinition::new(
@@ -109,17 +108,13 @@ mod tests {
             .unwrap();
 
         let insert_statement = "insert into numbers values (1), (3), (5), (7), (9)";
-        execution_test_context
-            .execute_query(insert_statement)
-            .unwrap();
+        test_db.execute_query(insert_statement).unwrap();
 
         let insert_statement = "insert into numbers select number+1 from numbers";
-        execution_test_context
-            .execute_query(insert_statement)
-            .unwrap();
+        test_db.execute_query(insert_statement).unwrap();
 
         let select = "select number from numbers";
-        let mut result = execution_test_context
+        let mut result = test_db
             .execute_query(select)
             .unwrap()
             .iter()
@@ -134,9 +129,8 @@ mod tests {
 
     #[test]
     fn repeatable_read_sees_own_inserted_values() {
-        let empty_test_context = EmptyTestContext::new();
-        let execution_test_context = ExecutionTestContext::new(&empty_test_context);
-        execution_test_context
+        let test_db = TestDb::new();
+        test_db
             .create_table(
                 "numbers",
                 vec![ColumnDefinition::new(
@@ -148,24 +142,22 @@ mod tests {
             )
             .unwrap();
 
-        let mut insert_transaction = execution_test_context
-            .context
+        let mut insert_transaction = test_db
             .transaction_manager
             .start_transaction(Some(IsolationLevel::RepeatableRead))
             .unwrap();
-        execution_test_context
+        test_db
             .execute_query_with_transaction(
                 "insert into numbers values (1), (2), (3)",
                 &insert_transaction,
             )
             .unwrap();
-        execution_test_context
-            .context
+        test_db
             .transaction_manager
             .refresh_transaction(&mut insert_transaction)
             .unwrap();
 
-        let mut rows = execution_test_context
+        let mut rows = test_db
             .execute_query_with_transaction("select * from numbers", &insert_transaction)
             .unwrap()
             .iter()
