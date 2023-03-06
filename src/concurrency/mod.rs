@@ -212,20 +212,16 @@ impl<'a> Transaction<'a> {
 
 pub struct TransactionManager<'a> {
     buffer_manager: &'a BufferManager,
-    pub lock_manager: &'a LockManager,
+    pub lock_manager: LockManager,
     next_tid: AtomicU32,
     alive_tids: RwLock<HashSet<TransactionId>>,
 }
 
 impl<'a> TransactionManager<'a> {
-    pub fn new(
-        buffer_manager: &'a BufferManager,
-        lock_manager: &'a LockManager,
-        bootstrap: bool,
-    ) -> Result<Self> {
+    pub fn new(buffer_manager: &'a BufferManager, bootstrap: bool) -> Result<Self> {
         let this = Self {
             buffer_manager,
-            lock_manager,
+            lock_manager: LockManager::new(),
             next_tid: AtomicU32::new(2),
             alive_tids: RwLock::new(HashSet::new()),
         };
@@ -442,7 +438,7 @@ mod tests {
     use super::TransactionManager;
     use crate::buffer::buffer_manager::BufferManager;
     use crate::common::PAGE_SIZE;
-    use crate::concurrency::lock_manager::LockManager;
+    
     use crate::concurrency::TransactionStatus;
     use crate::storage::file_manager::FileManager;
 
@@ -451,9 +447,7 @@ mod tests {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
         let buffer_manager = BufferManager::new(file_manager, 1);
-        let lock_manager = LockManager::new();
-        let transaction_manager =
-            TransactionManager::new(&buffer_manager, &lock_manager, true).unwrap();
+        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
 
         let t1 = transaction_manager.start_transaction(None).unwrap();
         assert_eq!(t1.tid, 2);
@@ -489,8 +483,7 @@ mod tests {
             }
         }
 
-        let transaction_manager =
-            TransactionManager::new(&buffer_manager, &lock_manager, false).unwrap();
+        let transaction_manager = TransactionManager::new(&buffer_manager, false).unwrap();
         transaction_manager.load_transaction_log().unwrap();
 
         for tid in 4..=(4 * PAGE_SIZE + 3) {

@@ -248,9 +248,7 @@ mod tests {
     impl<'a> ExecutionTestContext<'a> {
         pub fn new(context: &'a EmptyTestContext) -> Self {
             let buffer_manager = &context.buffer_manager;
-            let lock_manager = &context.lock_manager;
-            let transaction_manager =
-                TransactionManager::new(buffer_manager, lock_manager, true).unwrap();
+            let transaction_manager = TransactionManager::new(buffer_manager, true).unwrap();
             let bootstrap_transaction = transaction_manager.bootstrap();
             let catalog = Catalog::new(buffer_manager, true, &bootstrap_transaction).unwrap();
             bootstrap_transaction.commit().unwrap();

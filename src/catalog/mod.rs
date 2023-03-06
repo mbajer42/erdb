@@ -245,7 +245,7 @@ mod tests {
     use crate::buffer::buffer_manager::BufferManager;
     use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::catalog::{CATALOG_COLUMNS_NAME, CATALOG_COLUMNS_SCHEMA, CATALOG_TABLES_NAME};
-    use crate::concurrency::lock_manager::LockManager;
+    
     use crate::concurrency::TransactionManager;
     use crate::storage::file_manager::FileManager;
 
@@ -254,9 +254,7 @@ mod tests {
         let data_dir = tempdir()?;
         let file_manager = FileManager::new(data_dir.path())?;
         let buffer_manager = BufferManager::new(file_manager, 2);
-        let lock_manager = LockManager::new();
-        let transaction_manager =
-            TransactionManager::new(&buffer_manager, &lock_manager, true).unwrap();
+        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
         let bootstrap_transaction = transaction_manager.bootstrap();
 
         let _ = Catalog::new(&buffer_manager, true, &bootstrap_transaction)?;
@@ -283,8 +281,7 @@ mod tests {
         let data_dir = tempdir()?;
         let file_manager = FileManager::new(data_dir.path())?;
         let buffer_manager = BufferManager::new(file_manager, 2);
-        let lock_manager = LockManager::new();
-        let transaction_manager = TransactionManager::new(&buffer_manager, &lock_manager, true)?;
+        let transaction_manager = TransactionManager::new(&buffer_manager, true)?;
         let bootstrap_transaction = transaction_manager.bootstrap();
         let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction)?;
         bootstrap_transaction.commit().unwrap();
