@@ -204,6 +204,8 @@ impl<'a> ExecutorFactory<'a> {
 #[cfg(test)]
 mod tests {
 
+    use std::sync::Arc;
+
     use anyhow::Result;
     use tempfile::{tempdir, TempDir};
 
@@ -212,7 +214,6 @@ mod tests {
     use crate::buffer::buffer_manager::BufferManager;
     use crate::catalog::schema::{ColumnDefinition, TypeId};
     use crate::catalog::Catalog;
-    use crate::concurrency::lock_manager::LockManager;
     use crate::concurrency::{Transaction, TransactionManager};
     use crate::parser::parse_sql;
     use crate::planner::Planner;
@@ -222,54 +223,58 @@ mod tests {
     #[allow(dead_code)]
     pub struct EmptyTestContext {
         data_dir: TempDir,
-        buffer_manager: BufferManager,
-        lock_manager: LockManager,
+        buffer_manager: Arc<BufferManager>,
+        pub transaction_manager: TransactionManager,
     }
 
     impl EmptyTestContext {
         pub fn new() -> Self {
             let data_dir = tempdir().unwrap();
             let file_manager = FileManager::new(data_dir.path()).unwrap();
-            let buffer_manager = BufferManager::new(file_manager, 2);
+            let buffer_manager = Arc::new(BufferManager::new(file_manager, 2));
+            let transaction_manager =
+                TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
             Self {
                 data_dir,
                 buffer_manager,
-                lock_manager: LockManager::new(),
+                transaction_manager,
             }
         }
     }
 
     pub struct ExecutionTestContext<'a> {
+        pub context: &'a EmptyTestContext,
         buffer_manager: &'a BufferManager,
         catalog: Catalog<'a>,
-        pub transaction_manager: TransactionManager<'a>,
     }
 
     impl<'a> ExecutionTestContext<'a> {
         pub fn new(context: &'a EmptyTestContext) -> Self {
             let buffer_manager = &context.buffer_manager;
-            let transaction_manager = TransactionManager::new(buffer_manager, true).unwrap();
-            let bootstrap_transaction = transaction_manager.bootstrap();
+            let bootstrap_transaction = context.transaction_manager.bootstrap();
             let catalog = Catalog::new(buffer_manager, true, &bootstrap_transaction).unwrap();
             bootstrap_transaction.commit().unwrap();
             drop(bootstrap_transaction);
 
             Self {
+                context,
                 buffer_manager,
                 catalog,
-                transaction_manager,
             }
         }
 
         pub fn create_table(&self, table_name: &str, columns: Vec<ColumnDefinition>) -> Result<()> {
-            let transaction = self.transaction_manager.start_transaction(None)?;
+            let transaction = self.context.transaction_manager.start_transaction(None)?;
             self.catalog
                 .create_table(table_name, columns, &transaction)?;
             transaction.commit()
         }
 
         pub fn execute_query(&self, sql: &str) -> Result<Vec<Tuple>> {
-            let transaction = self.transaction_manager.start_implicit_transaction()?;
+            let transaction = self
+                .context
+                .transaction_manager
+                .start_implicit_transaction()?;
             self.execute_query_with_transaction(sql, &transaction)
         }
 
@@ -310,6 +315,7 @@ mod tests {
             .unwrap();
 
         let insert_transaction = execution_test_context
+            .context
             .transaction_manager
             .start_transaction(None)
             .unwrap();

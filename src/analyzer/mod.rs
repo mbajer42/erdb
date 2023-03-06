@@ -642,6 +642,8 @@ impl<'a> Analyzer<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use tempfile::tempdir;
 
     use super::logical_plan::{LogicalExpr, LogicalPlan, TableReference};
@@ -650,7 +652,6 @@ mod tests {
     use crate::buffer::buffer_manager::BufferManager;
     use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::catalog::Catalog;
-    
     use crate::concurrency::TransactionManager;
     use crate::parser::ast::{BinaryOperator, UnaryOperator};
     use crate::parser::parse_sql;
@@ -660,8 +661,9 @@ mod tests {
     fn can_bind_wildcard_select() {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = BufferManager::new(file_manager, 1);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let buffer_manager = Arc::new(BufferManager::new(file_manager, 1));
+        let transaction_manager =
+            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
         let bootstrap_transaction = transaction_manager.bootstrap();
 
         let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction).unwrap();
@@ -709,8 +711,9 @@ mod tests {
     fn can_bind_qualified_wildcard_select() {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = BufferManager::new(file_manager, 1);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let buffer_manager = Arc::new(BufferManager::new(file_manager, 1));
+        let transaction_manager =
+            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
         let bootstrap_transaction = transaction_manager.bootstrap();
 
         let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction).unwrap();
@@ -758,8 +761,9 @@ mod tests {
     fn can_analyze_arithmetic_expressions() {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = BufferManager::new(file_manager, 1);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let buffer_manager = Arc::new(BufferManager::new(file_manager, 1));
+        let transaction_manager =
+            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
         let bootstrap_transaction = transaction_manager.bootstrap();
 
         let catalog = Catalog::new(&buffer_manager, true, &bootstrap_transaction).unwrap();
@@ -832,8 +836,9 @@ mod tests {
     fn can_analyze_values() {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = BufferManager::new(file_manager, 1);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let buffer_manager = Arc::new(BufferManager::new(file_manager, 1));
+        let transaction_manager =
+            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
         let bootstrap_transaction = transaction_manager.bootstrap();
 
         let sql = "

@@ -230,6 +230,7 @@ mod tests {
             .unwrap();
 
         let mut select_transaction = execution_test_context
+            .context
             .transaction_manager
             .start_transaction(Some(IsolationLevel::RepeatableRead))
             .unwrap();
@@ -240,6 +241,7 @@ mod tests {
             .unwrap();
 
         execution_test_context
+            .context
             .transaction_manager
             .refresh_transaction(&mut select_transaction)
             .unwrap();
@@ -277,6 +279,7 @@ mod tests {
             .unwrap();
 
         let mut select_transaction = execution_test_context
+            .context
             .transaction_manager
             .start_transaction(Some(IsolationLevel::ReadCommitted))
             .unwrap();
@@ -287,6 +290,7 @@ mod tests {
             .unwrap();
 
         execution_test_context
+            .context
             .transaction_manager
             .refresh_transaction(&mut select_transaction)
             .unwrap();

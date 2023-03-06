@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Error, Result};
 
@@ -78,7 +78,7 @@ pub struct Transaction<'a> {
     auto_commit: bool,
     end: Cell<TransactionEnd>,
     alive_tids: HashSet<TransactionId>,
-    pub manager: &'a TransactionManager<'a>,
+    pub manager: &'a TransactionManager,
 }
 
 impl<'a> Transaction<'a> {
@@ -210,15 +210,15 @@ impl<'a> Transaction<'a> {
     }
 }
 
-pub struct TransactionManager<'a> {
-    buffer_manager: &'a BufferManager,
+pub struct TransactionManager {
+    buffer_manager: Arc<BufferManager>,
     pub lock_manager: LockManager,
     next_tid: AtomicU32,
     alive_tids: RwLock<HashSet<TransactionId>>,
 }
 
-impl<'a> TransactionManager<'a> {
-    pub fn new(buffer_manager: &'a BufferManager, bootstrap: bool) -> Result<Self> {
+impl TransactionManager {
+    pub fn new(buffer_manager: Arc<BufferManager>, bootstrap: bool) -> Result<Self> {
         let this = Self {
             buffer_manager,
             lock_manager: LockManager::new(),
@@ -226,7 +226,7 @@ impl<'a> TransactionManager<'a> {
             alive_tids: RwLock::new(HashSet::new()),
         };
         if bootstrap {
-            buffer_manager
+            this.buffer_manager
                 .create_table(TRANSACTION_LOG_TABLE_ID)
                 .with_context(|| {
                     "Could not create a transaction log during bootstrap".to_string()
@@ -239,13 +239,13 @@ impl<'a> TransactionManager<'a> {
     }
 
     pub fn start_transaction(
-        &'a self,
+        &self,
         isolation_level: Option<IsolationLevel>,
-    ) -> Result<Transaction<'a>> {
+    ) -> Result<Transaction> {
         self.create_transaction(false, isolation_level.unwrap_or(DEFAULT_ISOLATION_LEVEL))
     }
 
-    pub fn start_implicit_transaction(&'a self) -> Result<Transaction<'a>> {
+    pub fn start_implicit_transaction(&self) -> Result<Transaction> {
         self.create_transaction(true, DEFAULT_ISOLATION_LEVEL)
     }
 
@@ -267,10 +267,10 @@ impl<'a> TransactionManager<'a> {
     }
 
     fn create_transaction(
-        &'a self,
+        &self,
         auto_commit: bool,
         isolation_level: IsolationLevel,
-    ) -> Result<Transaction<'a>> {
+    ) -> Result<Transaction> {
         let tid = self
             .next_tid
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |val| {
@@ -305,7 +305,7 @@ impl<'a> TransactionManager<'a> {
 
     /// Starts a transaction which can be used by other parts to complete bootstrap process.
     /// Should be used only during bootstrap process
-    pub fn bootstrap(&'a self) -> Transaction<'a> {
+    pub fn bootstrap(&self) -> Transaction {
         self.lock_manager
             .start_transaction(BOOTSTRAP_TRANSACTION_ID);
         Transaction {
@@ -433,12 +433,13 @@ impl<'a> TransactionManager<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use tempfile::tempdir;
 
     use super::TransactionManager;
     use crate::buffer::buffer_manager::BufferManager;
     use crate::common::PAGE_SIZE;
-    
     use crate::concurrency::TransactionStatus;
     use crate::storage::file_manager::FileManager;
 
@@ -446,8 +447,9 @@ mod tests {
     fn can_bootstrap_and_load_logs() {
         let data_dir = tempdir().unwrap();
         let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = BufferManager::new(file_manager, 1);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let buffer_manager = Arc::new(BufferManager::new(file_manager, 1));
+        let transaction_manager =
+            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
 
         let t1 = transaction_manager.start_transaction(None).unwrap();
         assert_eq!(t1.tid, 2);
@@ -483,7 +485,8 @@ mod tests {
             }
         }
 
-        let transaction_manager = TransactionManager::new(&buffer_manager, false).unwrap();
+        let transaction_manager =
+            TransactionManager::new(Arc::clone(&buffer_manager), false).unwrap();
         transaction_manager.load_transaction_log().unwrap();
 
         for tid in 4..=(4 * PAGE_SIZE + 3) {

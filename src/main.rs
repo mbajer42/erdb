@@ -12,6 +12,7 @@ mod tuple;
 
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
+use std::sync::Arc;
 use std::thread;
 
 use analyzer::Analyzer;
@@ -26,7 +27,6 @@ use parser::parse_sql;
 use planner::Planner;
 use printer::Printer;
 use storage::file_manager::FileManager;
-
 
 use crate::concurrency::TransactionManager;
 
@@ -115,7 +115,7 @@ fn handle_metacommand(
 }
 
 fn get_transaction<'a, 'b>(
-    transaction_manager: &'a TransactionManager<'a>,
+    transaction_manager: &'a TransactionManager,
     transaction: &'b mut Option<Transaction<'a>>,
 ) -> Result<&'b mut Transaction<'a>> {
     let current = transaction.take();
@@ -138,7 +138,7 @@ fn handle_sql_statement<'a, 'b>(
     writer: &mut BufWriter<&TcpStream>,
     sql: &str,
     buffer_manager: &BufferManager,
-    transaction_manager: &'a TransactionManager<'a>,
+    transaction_manager: &'a TransactionManager,
     catalog: &Catalog,
     transaction: &'b mut Option<Transaction<'a>>,
 ) -> Result<()> {
@@ -263,8 +263,8 @@ fn main() -> Result<()> {
     let config = ServerConfig::parse();
 
     let file_manager = FileManager::new(config.data)?;
-    let buffer_manager = BufferManager::new(file_manager, config.pool_size);
-    let transaction_manager = TransactionManager::new(&buffer_manager, config.new)
+    let buffer_manager = Arc::new(BufferManager::new(file_manager, config.pool_size));
+    let transaction_manager = TransactionManager::new(Arc::clone(&buffer_manager), config.new)
         .with_context(|| "Failed to create transaction manager")?;
     let bootstrap_transaction = transaction_manager.bootstrap();
 

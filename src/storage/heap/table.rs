@@ -425,7 +425,6 @@ mod tests {
     use super::Table;
     use crate::buffer::buffer_manager::BufferManager;
     use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
-    
     use crate::concurrency::TransactionManager;
     use crate::storage::file_manager::FileManager;
     use crate::storage::heap::table::HeapTupleUpdateResult;
@@ -443,8 +442,9 @@ mod tests {
         let data_dir = tempdir()?;
         let file_manager = FileManager::new(data_dir.path())?;
         file_manager.create_table(1)?;
-        let buffer_manager = BufferManager::new(file_manager, 2);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let buffer_manager = Arc::new(BufferManager::new(file_manager, 2));
+        let transaction_manager =
+            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
 
         let schema = Schema::new(vec![
             ColumnDefinition::new(TypeId::Integer, "non_null_integer".to_owned(), 0, true),
@@ -493,8 +493,9 @@ mod tests {
         let data_dir = tempdir()?;
         let file_manager = FileManager::new(data_dir.path())?;
         file_manager.create_table(1)?;
-        let buffer_manager = BufferManager::new(file_manager, 2);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let buffer_manager = Arc::new(BufferManager::new(file_manager, 2));
+        let transaction_manager =
+            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
 
         let schema = Schema::new(vec![ColumnDefinition::new(
             TypeId::Integer,
@@ -526,8 +527,9 @@ mod tests {
         let data_dir = tempdir()?;
         let file_manager = FileManager::new(data_dir.path())?;
         file_manager.create_table(1)?;
-        let buffer_manager = BufferManager::new(file_manager, 2);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let buffer_manager = Arc::new(BufferManager::new(file_manager, 2));
+        let transaction_manager =
+            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
 
         let schema = Schema::new(vec![ColumnDefinition::new(
             TypeId::Integer,
@@ -579,8 +581,9 @@ mod tests {
         let data_dir = tempdir()?;
         let file_manager = FileManager::new(data_dir.path())?;
         file_manager.create_table(1)?;
-        let buffer_manager = BufferManager::new(file_manager, 2);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let buffer_manager = Arc::new(BufferManager::new(file_manager, 2));
+        let transaction_manager =
+            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
 
         let schema = Schema::new(vec![ColumnDefinition::new(
             TypeId::Integer,
@@ -632,8 +635,9 @@ mod tests {
         let data_dir = tempdir()?;
         let file_manager = FileManager::new(data_dir.path())?;
         file_manager.create_table(1)?;
-        let buffer_manager = BufferManager::new(file_manager, 2);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let buffer_manager = Arc::new(BufferManager::new(file_manager, 2));
+        let transaction_manager =
+            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
 
         let schema = Schema::new(vec![ColumnDefinition::new(
             TypeId::Integer,
@@ -670,8 +674,9 @@ mod tests {
         let data_dir = tempdir()?;
         let file_manager = FileManager::new(data_dir.path())?;
         file_manager.create_table(1)?;
-        let buffer_manager = BufferManager::new(file_manager, 2);
-        let transaction_manager = TransactionManager::new(&buffer_manager, true).unwrap();
+        let buffer_manager = Arc::new(BufferManager::new(file_manager, 2));
+        let transaction_manager =
+            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
 
         let schema = Schema::new(vec![ColumnDefinition::new(
             TypeId::Integer,
