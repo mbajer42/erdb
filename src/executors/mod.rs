@@ -267,7 +267,7 @@ mod tests {
             sql: &str,
             transaction: &Transaction,
         ) -> Result<Vec<Tuple>> {
-            let query = parse_sql(sql)?;
+            let (_, query) = parse_sql(sql)?;
             let analyzer = Analyzer::new(&self.catalog);
             let query = analyzer.analyze(query)?;
             let planner = Planner::new();

@@ -142,7 +142,7 @@ fn handle_sql_statement<'a, 'b>(
     catalog: &Catalog,
     transaction: &'b mut Option<Transaction<'a>>,
 ) -> Result<()> {
-    let statement = parse_sql(sql)?;
+    let (explain, statement) = parse_sql(sql)?;
     match statement {
         Statement::CreateTable { name, columns } => {
             let columns = columns.into_iter().map(|col| col.into()).collect();
@@ -184,11 +184,15 @@ fn handle_sql_statement<'a, 'b>(
             let query = analyzer.analyze(query)?;
             let planner = Planner::new();
             let plan = planner.prepare_logical_plan(query)?;
-            let transaction = get_transaction(transaction_manager, transaction)?;
-            let mut executor_factory = ExecutorFactory::new(buffer_manager, transaction);
-            let executor = executor_factory.create_executor(plan)?;
-            let mut printer = Printer::new(executor);
-            printer.print_all_tuples(writer)?;
+            if explain {
+                writer.write_all(format!("{}", plan).as_bytes())?;
+            } else {
+                let transaction = get_transaction(transaction_manager, transaction)?;
+                let mut executor_factory = ExecutorFactory::new(buffer_manager, transaction);
+                let executor = executor_factory.create_executor(plan)?;
+                let mut printer = Printer::new(executor);
+                printer.print_all_tuples(writer)?;
+            }
         }
     }
     Ok(())

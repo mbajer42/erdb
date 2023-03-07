@@ -683,7 +683,7 @@ mod tests {
         let sql = "
             select * from accounts
         ";
-        let statement = parse_sql(sql).unwrap();
+        let (_, statement) = parse_sql(sql).unwrap();
         let analyzer = Analyzer::new(&catalog);
         let query = analyzer.analyze(statement).unwrap();
 
@@ -734,7 +734,7 @@ mod tests {
         let sql = "
             select acc.* from accounts acc
         ";
-        let statement = parse_sql(sql).unwrap();
+        let (_, statement) = parse_sql(sql).unwrap();
         let analyzer = Analyzer::new(&catalog);
         let query = analyzer.analyze(statement).unwrap();
 
@@ -787,7 +787,7 @@ mod tests {
         let sql = "
             select -id as negative_id, id+1, 2 * (3+5) from accounts
         ";
-        let statement = parse_sql(sql).unwrap();
+        let (_, statement) = parse_sql(sql).unwrap();
         let analyzer = Analyzer::new(&catalog);
         let query = analyzer.analyze(statement).unwrap();
 
@@ -847,7 +847,7 @@ mod tests {
         let sql = "
             values (1, NULL, 'foo', true), (2, 'bar', NULL, false);
         ";
-        let statement = parse_sql(sql).unwrap();
+        let (_, statement) = parse_sql(sql).unwrap();
 
         let catalog =
             Catalog::new(Arc::clone(&buffer_manager), true, &bootstrap_transaction).unwrap();

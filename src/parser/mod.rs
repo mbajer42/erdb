@@ -55,7 +55,14 @@ impl Parser {
         }
     }
 
-    fn parse_statement(&mut self) -> Result<Statement> {
+    fn parse_statement(&mut self) -> Result<(bool, Statement)> {
+        let explain = match self.peek_token() {
+            Token::Keyword(Keyword::Explain) => {
+                self.next_token();
+                true
+            }
+            _ => false,
+        };
         let statement = match self.next_token() {
             Token::Keyword(keyword) => match keyword {
                 Keyword::Create => self.parse_create_statement()?,
@@ -73,7 +80,7 @@ impl Parser {
         };
 
         self.expect_end()?;
-        Ok(statement)
+        Ok((explain, statement))
     }
 
     fn expect_end(&mut self) -> Result<()> {
@@ -680,7 +687,9 @@ impl Parser {
     }
 }
 
-pub fn parse_sql(sql: &str) -> Result<Statement> {
+/// Parses an sql query
+/// Returns whether the execution plan should be shown (i.e. explained) and the parsed statement
+pub fn parse_sql(sql: &str) -> Result<(bool, Statement)> {
     let mut parser = Parser::new(sql)?;
     parser.parse_statement()
 }
@@ -707,7 +716,7 @@ mod tests {
             );
         ";
 
-        let statement = parse_sql(sql).unwrap();
+        let (_, statement) = parse_sql(sql).unwrap();
         let expected_statement = Statement::CreateTable {
             name: "accounts".to_owned(),
             columns: vec![
@@ -747,7 +756,8 @@ mod tests {
             select * from accounts
         ";
 
-        let statement = parse_sql(sql).unwrap();
+        let _statement = parse_sql(sql).unwrap();
+        let (_, statement) = parse_sql(sql).unwrap();
         let expected_statement = Statement::Select(SelectStatement {
             values: None,
             projections: vec![Projection::Wildcard],
@@ -769,7 +779,8 @@ mod tests {
             from table1 table_alias
         ";
 
-        let statement = parse_sql(sql).unwrap();
+        let _statement = parse_sql(sql).unwrap();
+        let (_, statement) = parse_sql(sql).unwrap();
         let expected_statement = Statement::Select(SelectStatement {
             values: None,
             projections: vec![
@@ -800,7 +811,7 @@ mod tests {
             select -id + 2 * (3 + 5) from table_1
         ";
 
-        let statement = parse_sql(sql).unwrap();
+        let (_, statement) = parse_sql(sql).unwrap();
         let expected_statement = Statement::Select(SelectStatement {
             values: None,
             projections: vec![Projection::UnnamedExpr(ExprNode::Binary {
@@ -843,7 +854,7 @@ mod tests {
 
         for op in comparison_operators {
             let sql = format!("select id {} 42 from table_name;", op);
-            let statement = parse_sql(&sql).unwrap();
+            let (_, statement) = parse_sql(&sql).unwrap();
             let expected_statement = Statement::Select(SelectStatement {
                 values: None,
                 projections: vec![Projection::UnnamedExpr(ExprNode::Binary {
@@ -869,7 +880,7 @@ mod tests {
             select -3 + 2 * (3 + 5);
         ";
 
-        let statement = parse_sql(sql).unwrap();
+        let (_, statement) = parse_sql(sql).unwrap();
         let expected_statement = Statement::Select(SelectStatement {
             values: None,
             projections: vec![Projection::UnnamedExpr(ExprNode::Binary {
@@ -901,7 +912,7 @@ mod tests {
             values (1, 'foo', true), (2, 'bar', false)
         ";
 
-        let statement = parse_sql(sql).unwrap();
+        let (_, statement) = parse_sql(sql).unwrap();
         let expected_statement = Statement::Select(SelectStatement {
             values: Some(vec![
                 vec![
@@ -929,7 +940,7 @@ mod tests {
             insert into table_name values (1, 'foo', true), (2, 'bar', false)
         ";
 
-        let statement = parse_sql(sql).unwrap();
+        let (_, statement) = parse_sql(sql).unwrap();
         let expected_statement = Statement::Insert {
             into: TableNode::TableReference {
                 name: "table_name".to_owned(),
@@ -963,7 +974,7 @@ mod tests {
             insert into new_table select * from old_table
         ";
 
-        let statement = parse_sql(sql).unwrap();
+        let (_, statement) = parse_sql(sql).unwrap();
         let expected_statement = Statement::Insert {
             into: TableNode::TableReference {
                 name: "new_table".to_owned(),
@@ -990,7 +1001,7 @@ mod tests {
             update accounts set balance = balance + 100, tx_cnt = tx_cnt + 1 where id = 42
         ";
 
-        let statement = parse_sql(sql).unwrap();
+        let (_, statement) = parse_sql(sql).unwrap();
         let expected_statement = Statement::Update {
             table: TableNode::TableReference {
                 name: "accounts".to_owned(),
