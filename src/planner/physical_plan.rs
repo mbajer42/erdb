@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::{self, Debug};
 
 use crate::catalog::schema::Schema;
 use crate::common::TableId;
@@ -51,6 +52,61 @@ impl Expr {
             Expr::IsNotNull(expr) => {
                 let val = expr.evaluate(tuple);
                 Value::Boolean(!val.is_null())
+            }
+        }
+    }
+}
+
+struct ExprWriter<'a> {
+    expr: &'a Expr,
+    plans: &'a [&'a PhysicalPlan],
+}
+
+impl fmt::Display for ExprWriter<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.expr {
+            Expr::Value(val) => fmt::Display::fmt(val, f),
+            Expr::ColumnReference { tuple_idx, col_idx } => {
+                let schema = self.plans[*tuple_idx].schema();
+                let column = &schema.columns()[*col_idx];
+                f.write_str(&column.column_name)
+            }
+            Expr::Unary { op, expr } => {
+                write!(f, "{}", op)?;
+                let expr_writer = ExprWriter {
+                    expr,
+                    plans: self.plans,
+                };
+                write!(f, "{}", expr_writer)
+            }
+            Expr::Binary { left, op, right } => {
+                let expr_writer = ExprWriter {
+                    expr: left,
+                    plans: self.plans,
+                };
+                write!(f, "{}", expr_writer)?;
+                write!(f, "{}", op)?;
+                let expr_writer = ExprWriter {
+                    expr: right,
+                    plans: self.plans,
+                };
+                write!(f, "{}", expr_writer)
+            }
+            Expr::IsNull(expr) => {
+                let expr_writer = ExprWriter {
+                    expr,
+                    plans: self.plans,
+                };
+                write!(f, "{}", expr_writer)?;
+                f.write_str(" IS NULL")
+            }
+            Expr::IsNotNull(expr) => {
+                let expr_writer = ExprWriter {
+                    expr,
+                    plans: self.plans,
+                };
+                write!(f, "{}", expr_writer)?;
+                f.write_str(" IS NOT NULL")
             }
         }
     }
@@ -137,8 +193,123 @@ impl PhysicalPlan {
     }
 }
 
+struct PaddedWriter<'a> {
+    buffer: &'a mut (dyn fmt::Write + 'a),
+    use_padding: bool,
+}
+
+impl fmt::Write for PaddedWriter<'_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for s in s.split_inclusive('\n') {
+            if self.use_padding {
+                self.buffer.write_str("  ")?;
+            }
+            self.use_padding = s.ends_with('\n');
+            self.buffer.write_str(s)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for PhysicalPlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use std::fmt::Write;
+
+        match self {
+            Self::SequentialScan {
+                table_id,
+                output_schema: _,
+            } => write!(f, "Sequential Scan on table with id {}", table_id),
+            Self::Projection {
+                projections: _,
+                child,
+                output_schema: _,
+            } => write!(f, "{}", child),
+            Self::Values {
+                values: _,
+                output_schema: _,
+            } => write!(f, "Values Scan"),
+            Self::Insert {
+                target,
+                target_schema: _,
+                child,
+            } => {
+                writeln!(f, "Insert into table with id {}", target)?;
+                let mut writer = PaddedWriter {
+                    buffer: f,
+                    use_padding: true,
+                };
+                write!(&mut writer, "{}", child)
+            }
+            Self::Update {
+                table,
+                set: _,
+                child,
+            } => {
+                writeln!(f, "Update table with id {}", table)?;
+                let mut writer = PaddedWriter {
+                    buffer: f,
+                    use_padding: true,
+                };
+                write!(&mut writer, "{}", child)
+            }
+            Self::Delete { from, child } => {
+                writeln!(f, "Delete from table with id {}", from)?;
+                let mut writer = PaddedWriter {
+                    buffer: f,
+                    use_padding: true,
+                };
+                write!(&mut writer, "{}", child)
+            }
+            Self::Filter { filter, child } => {
+                let expr_writer = ExprWriter {
+                    expr: filter,
+                    plans: &[child],
+                };
+                writeln!(f, "Filter ({})", expr_writer)?;
+                let mut writer = PaddedWriter {
+                    buffer: f,
+                    use_padding: true,
+                };
+                write!(&mut writer, "{}", child)
+            }
+            Self::NestedLoopJoin {
+                left,
+                right,
+                join_type: _,
+                on,
+                output_schema: _,
+            } => {
+                let on_expr = on
+                    .iter()
+                    .map(|expr| {
+                        let expr_writer = ExprWriter {
+                            expr,
+                            plans: &[left, right],
+                        };
+                        format!("{}", expr_writer)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("AND");
+
+                writeln!(f, "Nested Loop Join ({})", on_expr)?;
+
+                let mut writer = PaddedWriter {
+                    buffer: f,
+                    use_padding: true,
+                };
+                writeln!(&mut writer, "{}", left)?;
+                write!(&mut writer, "{}", right)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::PhysicalPlan;
+    use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::parser::ast::{BinaryOperator, UnaryOperator};
     use crate::planner::physical_plan::Expr;
     use crate::tuple::value::Value;
@@ -183,5 +354,33 @@ mod tests {
 
         let expr = Expr::IsNotNull(Box::new(Expr::Value(Value::Integer(42))));
         assert_eq!(expr.evaluate(&[]), Value::Boolean(true));
+    }
+
+    #[test]
+    fn can_format_physical_plan() {
+        let seq_scan = PhysicalPlan::SequentialScan {
+            table_id: 21,
+            output_schema: Schema::new(vec![
+                ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
+                ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
+                ColumnDefinition::new(TypeId::Integer, "count".to_owned(), 2, true),
+            ]),
+        };
+
+        let filter = PhysicalPlan::Filter {
+            filter: Expr::Binary {
+                left: Box::new(Expr::ColumnReference {
+                    tuple_idx: 0,
+                    col_idx: 0,
+                }),
+                op: BinaryOperator::Eq,
+                right: Box::new(Expr::Value(Value::Integer(1))),
+            },
+            child: Box::new(seq_scan),
+        };
+
+        let formatted = format!("{}", filter);
+        let expected = "Filter (id=1)\n  Sequential Scan on table with id 21";
+        assert_eq!(expected, formatted);
     }
 }
