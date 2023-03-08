@@ -142,7 +142,7 @@ pub enum PhysicalPlan {
         child: Box<PhysicalPlan>,
     },
     Filter {
-        filter: Expr,
+        filter: Vec<Expr>,
         child: Box<PhysicalPlan>,
     },
     NestedLoopJoin {
@@ -263,11 +263,19 @@ impl fmt::Display for PhysicalPlan {
                 write!(&mut writer, "{}", child)
             }
             Self::Filter { filter, child } => {
-                let expr_writer = ExprWriter {
-                    expr: filter,
-                    plans: &[child],
-                };
-                writeln!(f, "Filter ({})", expr_writer)?;
+                let filter_expr = filter
+                    .iter()
+                    .map(|expr| {
+                        let expr_writer = ExprWriter {
+                            expr,
+                            plans: &[child],
+                        };
+                        format!("{}", expr_writer)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("AND");
+
+                writeln!(f, "Filter ({})", filter_expr)?;
                 let mut writer = PaddedWriter {
                     buffer: f,
                     use_padding: true,
@@ -368,14 +376,14 @@ mod tests {
         };
 
         let filter = PhysicalPlan::Filter {
-            filter: Expr::Binary {
+            filter: vec![Expr::Binary {
                 left: Box::new(Expr::ColumnReference {
                     tuple_idx: 0,
                     col_idx: 0,
                 }),
                 op: BinaryOperator::Eq,
                 right: Box::new(Expr::Value(Value::Integer(1))),
-            },
+            }],
             child: Box::new(seq_scan),
         };
 

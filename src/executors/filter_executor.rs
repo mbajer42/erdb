@@ -8,26 +8,28 @@ use crate::tuple::Tuple;
 
 pub struct FilterExecutor<'a> {
     child: Box<dyn Executor + 'a>,
-    filter: Expr,
+    filter: Vec<Expr>,
 }
 
 impl<'a> FilterExecutor<'a> {
-    pub fn new(child: Box<dyn Executor + 'a>, filter: Expr) -> Self {
+    pub fn new(child: Box<dyn Executor + 'a>, filter: Vec<Expr>) -> Self {
         Self { child, filter }
+    }
+
+    fn satisfies_filter(&self, tuple: &Tuple) -> bool {
+        self.filter
+            .iter()
+            .all(|expr| match expr.evaluate(&[tuple]) {
+                Value::Boolean(b) => b,
+                _ => false,
+            })
     }
 
     fn next(&mut self) -> Result<Option<Tuple>> {
         loop {
             if let Some(tuple) = self.child.next().transpose()? {
-                match self.filter.evaluate(&[&tuple]) {
-                    Value::Boolean(b) => {
-                        if b {
-                            return Ok(Some(tuple));
-                        } else {
-                            continue;
-                        }
-                    }
-                    _ => continue,
+                if self.satisfies_filter(&tuple) {
+                    return Ok(Some(tuple));
                 }
             } else {
                 return Ok(None);
@@ -50,11 +52,7 @@ impl<'a> Executor for FilterExecutor<'a> {
     }
 
     fn re_evaluate_tuple(&self, tuple: &Tuple) -> bool {
-        self.child.re_evaluate_tuple(tuple)
-            && match self.filter.evaluate(&[tuple]) {
-                Value::Boolean(b) => b,
-                _ => false,
-            }
+        self.child.re_evaluate_tuple(tuple) && self.satisfies_filter(tuple)
     }
 }
 

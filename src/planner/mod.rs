@@ -42,7 +42,7 @@ impl Planner {
         &self,
         table: TableReference,
         set_expressions: HashMap<Vec<String>, LogicalExpr>,
-        filter: Option<LogicalExpr>,
+        filter: Vec<LogicalExpr>,
     ) -> Result<PhysicalPlan> {
         let table_id = match &table {
             TableReference::BaseTable {
@@ -80,11 +80,7 @@ impl Planner {
         })
     }
 
-    fn plan_delete(
-        &self,
-        from: TableReference,
-        filter: Option<LogicalExpr>,
-    ) -> Result<PhysicalPlan> {
+    fn plan_delete(&self, from: TableReference, filter: Vec<LogicalExpr>) -> Result<PhysicalPlan> {
         let table_id = match &from {
             TableReference::BaseTable {
                 table_id,
@@ -127,14 +123,10 @@ impl Planner {
         }
     }
 
-    fn plan_filter(
-        &self,
-        filter: Option<LogicalExpr>,
-        child: PhysicalPlan,
-    ) -> Result<PhysicalPlan> {
-        if let Some(filter) = filter {
+    fn plan_filter(&self, filter: Vec<LogicalExpr>, child: PhysicalPlan) -> Result<PhysicalPlan> {
+        if !filter.is_empty() {
             Ok(PhysicalPlan::Filter {
-                filter: self.plan_expression(filter, &[&child])?,
+                filter: self.plan_expressions(filter, &[&child])?,
                 child: Box::new(child),
             })
         } else {

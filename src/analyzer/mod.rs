@@ -15,6 +15,24 @@ use logical_plan::LogicalPlan;
 
 use self::logical_plan::{LogicalExpr, TableReference};
 
+/// Splits an expression into a conjunctive normal form
+/// i.e. a AND b AND c will be split into vec![a, b, c]
+fn split_expression(expr: LogicalExpr) -> Vec<LogicalExpr> {
+    let mut expressions = vec![];
+    let mut to_visit = vec![expr];
+    while let Some(expr) = to_visit.pop() {
+        match expr {
+            LogicalExpr::Binary { left, op, right } if op == BinaryOperator::And => {
+                to_visit.push(*left);
+                to_visit.push(*right);
+            }
+            expr => expressions.push(expr),
+        }
+    }
+
+    expressions
+}
+
 pub struct Analyzer<'a> {
     catalog: &'a Catalog,
 }
@@ -80,9 +98,9 @@ impl<'a> Analyzer<'a> {
                     col_def.type_id
                 )));
             }
-            Some(expr)
+            split_expression(expr)
         } else {
-            None
+            vec![]
         };
 
         Ok(LogicalPlan::Update { table, set, filter })
@@ -103,9 +121,9 @@ impl<'a> Analyzer<'a> {
                     col_def.type_id
                 )));
             }
-            Some(expr)
+            split_expression(expr)
         } else {
-            None
+            vec![]
         };
 
         Ok(LogicalPlan::Delete {
@@ -194,9 +212,9 @@ impl<'a> Analyzer<'a> {
                     col_def.type_id
                 )));
             }
-            Some(expr)
+            split_expression(expr)
         } else {
-            None
+            vec![]
         };
 
         Ok(Query {
@@ -260,7 +278,7 @@ impl<'a> Analyzer<'a> {
         Ok(Query {
             from: TableReference::EmptyTable,
             projections: vec![],
-            filter: None,
+            filter: vec![],
             values: expressions,
             output_schema: Schema::new(output_columns),
         })
@@ -697,7 +715,7 @@ mod tests {
                 LogicalExpr::Column(vec!["accounts".to_owned(), "id".to_owned()]),
                 LogicalExpr::Column(vec!["accounts".to_owned(), "name".to_owned()]),
             ],
-            filter: None,
+            filter: vec![],
             output_schema: Schema::new(vec![
                 ColumnDefinition::new(TypeId::Integer, "accounts.id".to_owned(), 0, true),
                 ColumnDefinition::new(TypeId::Text, "accounts.name".to_owned(), 1, true),
@@ -748,7 +766,7 @@ mod tests {
                 LogicalExpr::Column(vec!["acc".to_owned(), "id".to_owned()]),
                 LogicalExpr::Column(vec!["acc".to_owned(), "name".to_owned()]),
             ],
-            filter: None,
+            filter: vec![],
             output_schema: Schema::new(vec![
                 ColumnDefinition::new(TypeId::Integer, "acc.id".to_owned(), 0, true),
                 ColumnDefinition::new(TypeId::Text, "acc.name".to_owned(), 1, true),
@@ -823,7 +841,7 @@ mod tests {
                     }),
                 },
             ],
-            filter: None,
+            filter: vec![],
             output_schema: Schema::new(vec![
                 ColumnDefinition::new(TypeId::Integer, "negative_id".to_owned(), 0, true),
                 ColumnDefinition::new(TypeId::Integer, "id + 1".to_owned(), 1, true),
@@ -876,7 +894,7 @@ mod tests {
                     LogicalExpr::Boolean(false),
                 ],
             ],
-            filter: None,
+            filter: vec![],
             projections: vec![],
             output_schema: expected_output_schema,
         });

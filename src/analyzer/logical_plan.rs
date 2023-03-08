@@ -57,12 +57,12 @@ pub enum LogicalPlan {
     Delete {
         from: TableReference,
         /// WHERE clause
-        filter: Option<LogicalExpr>,
+        filter: Vec<LogicalExpr>,
     },
     Update {
         table: TableReference,
         set: HashMap<Vec<String>, LogicalExpr>,
-        filter: Option<LogicalExpr>,
+        filter: Vec<LogicalExpr>,
     },
     Select(Query),
 }
@@ -76,7 +76,7 @@ pub struct Query {
     /// SELECT list
     pub projections: Vec<LogicalExpr>,
     /// WHERE clause
-    pub filter: Option<LogicalExpr>,
+    pub filter: Vec<LogicalExpr>,
     /// the output schema of the query
     pub output_schema: Schema,
 }
