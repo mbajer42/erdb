@@ -65,8 +65,8 @@ impl<'a> Analyzer<'a> {
             .map(|(column, expression)| {
                 let (col_expr, col_def) =
                     Self::analyze_expression(ExprNode::Identifier(column), &table)?;
-                let column = match col_expr {
-                    LogicalExpr::Column(col) => col,
+                let column: Vec<String> = match col_expr {
+                    LogicalExpr::Column(col) => col.into(),
                     _ => unreachable!(),
                 };
                 let (value_expr, value_def) = Self::analyze_expression(expression, &table)?;
@@ -138,6 +138,7 @@ impl<'a> Analyzer<'a> {
                 table_id,
                 name: _,
                 schema,
+                filter: _,
             } => (table_id, schema),
             _ => unreachable!(),
         };
@@ -326,6 +327,7 @@ impl<'a> Analyzer<'a> {
                     table_id,
                     name: alias.unwrap_or(name),
                     schema,
+                    filter: vec![],
                 })
             }
             TableNode::Join {
@@ -566,6 +568,7 @@ impl<'a> Analyzer<'a> {
                 table_id: _,
                 name,
                 schema,
+                filter: _,
             } => {
                 if let Some(table) = table {
                     if name != table {
@@ -574,7 +577,9 @@ impl<'a> Analyzer<'a> {
                 }
                 let column = schema.find_column(column).map(|col_def| {
                     (
-                        LogicalExpr::Column(vec![name.clone(), col_def.column_name().to_owned()]),
+                        LogicalExpr::Column(
+                            vec![name.clone(), col_def.column_name().to_owned()].into(),
+                        ),
                         ColumnDefinition::new(
                             col_def.type_id(),
                             String::new(),
@@ -617,6 +622,7 @@ impl<'a> Analyzer<'a> {
                 table_id: _,
                 name: table_name,
                 schema,
+                filter: _,
             } => {
                 if let Some(table) = table {
                     if table_name != &table {
@@ -627,10 +633,9 @@ impl<'a> Analyzer<'a> {
                     .columns()
                     .iter()
                     .map(|col_def| {
-                        let expr = LogicalExpr::Column(vec![
-                            table_name.clone(),
-                            col_def.column_name().to_owned(),
-                        ]);
+                        let expr = LogicalExpr::Column(
+                            vec![table_name.clone(), col_def.column_name().to_owned()].into(),
+                        );
                         let name = format!("{}.{}", table_name, col_def.column_name());
                         let new_col_def = ColumnDefinition::new(
                             col_def.type_id(),
@@ -710,10 +715,11 @@ mod tests {
                 table_id,
                 name: "accounts".to_owned(),
                 schema,
+                filter: vec![],
             },
             projections: vec![
-                LogicalExpr::Column(vec!["accounts".to_owned(), "id".to_owned()]),
-                LogicalExpr::Column(vec!["accounts".to_owned(), "name".to_owned()]),
+                LogicalExpr::Column(vec!["accounts".to_owned(), "id".to_owned()].into()),
+                LogicalExpr::Column(vec!["accounts".to_owned(), "name".to_owned()].into()),
             ],
             filter: vec![],
             output_schema: Schema::new(vec![
@@ -761,10 +767,11 @@ mod tests {
                 table_id,
                 name: "acc".to_owned(),
                 schema,
+                filter: vec![],
             },
             projections: vec![
-                LogicalExpr::Column(vec!["acc".to_owned(), "id".to_owned()]),
-                LogicalExpr::Column(vec!["acc".to_owned(), "name".to_owned()]),
+                LogicalExpr::Column(vec!["acc".to_owned(), "id".to_owned()].into()),
+                LogicalExpr::Column(vec!["acc".to_owned(), "name".to_owned()].into()),
             ],
             filter: vec![],
             output_schema: Schema::new(vec![
@@ -814,20 +821,19 @@ mod tests {
                 table_id,
                 name: "accounts".to_owned(),
                 schema,
+                filter: vec![],
             },
             projections: vec![
                 LogicalExpr::Unary {
                     op: UnaryOperator::Minus,
-                    expr: Box::new(LogicalExpr::Column(vec![
-                        "accounts".to_owned(),
-                        "id".to_owned(),
-                    ])),
+                    expr: Box::new(LogicalExpr::Column(
+                        vec!["accounts".to_owned(), "id".to_owned()].into(),
+                    )),
                 },
                 LogicalExpr::Binary {
-                    left: Box::new(LogicalExpr::Column(vec![
-                        "accounts".to_owned(),
-                        "id".to_owned(),
-                    ])),
+                    left: Box::new(LogicalExpr::Column(
+                        vec!["accounts".to_owned(), "id".to_owned()].into(),
+                    )),
                     op: BinaryOperator::Plus,
                     right: Box::new(LogicalExpr::Integer(1)),
                 },

@@ -216,6 +216,7 @@ mod tests {
     use crate::catalog::schema::{ColumnDefinition, TypeId};
     use crate::catalog::Catalog;
     use crate::concurrency::{Transaction, TransactionManager};
+    use crate::optimizer::optimize;
     use crate::parser::parse_sql;
     use crate::planner::Planner;
     use crate::storage::file_manager::FileManager;
@@ -269,9 +270,10 @@ mod tests {
         ) -> Result<Vec<Tuple>> {
             let (_, query) = parse_sql(sql)?;
             let analyzer = Analyzer::new(&self.catalog);
-            let query = analyzer.analyze(query)?;
+            let logical_plan = analyzer.analyze(query)?;
+            let logical_plan = optimize(logical_plan);
             let planner = Planner::new();
-            let plan = planner.prepare_logical_plan(query)?;
+            let plan = planner.prepare_logical_plan(logical_plan)?;
             let mut executor_factory =
                 ExecutorFactory::new(Arc::clone(&self.buffer_manager), transaction);
             let mut executor = executor_factory.create_executor(plan)?;

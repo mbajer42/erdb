@@ -4,6 +4,7 @@ mod catalog;
 mod common;
 mod concurrency;
 mod executors;
+mod optimizer;
 mod parser;
 mod planner;
 mod printer;
@@ -22,6 +23,7 @@ use catalog::Catalog;
 use clap::{Arg, Command, Parser};
 use concurrency::Transaction;
 use executors::ExecutorFactory;
+use optimizer::optimize;
 use parser::ast::Statement;
 use parser::parse_sql;
 use planner::Planner;
@@ -181,9 +183,10 @@ fn handle_sql_statement<'a, 'b>(
         }
         query => {
             let analyzer = Analyzer::new(catalog);
-            let query = analyzer.analyze(query)?;
+            let logical_plan = analyzer.analyze(query)?;
+            let logical_plan = optimize(logical_plan);
             let planner = Planner::new();
-            let plan = planner.prepare_logical_plan(query)?;
+            let plan = planner.prepare_logical_plan(logical_plan)?;
             if explain {
                 writer.write_all(format!("{}", plan).as_bytes())?;
             } else {

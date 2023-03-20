@@ -49,6 +49,7 @@ impl Planner {
                 table_id,
                 name: _,
                 schema: _,
+                filter: _,
             } => *table_id,
             _ => unreachable!(),
         };
@@ -86,6 +87,7 @@ impl Planner {
                 table_id,
                 name: _,
                 schema: _,
+                filter: _,
             } => *table_id,
             _ => unreachable!(),
         };
@@ -140,12 +142,14 @@ impl Planner {
                 table_id,
                 name,
                 mut schema,
+                filter,
             } => {
                 schema.prepend_column_name(&name);
-                PhysicalPlan::SequentialScan {
+                let seq_scan = PhysicalPlan::SequentialScan {
                     table_id,
                     output_schema: schema,
-                }
+                };
+                self.plan_filter(filter, seq_scan)?
             }
             TableReference::Join {
                 left,
@@ -214,7 +218,7 @@ impl Planner {
         children: &[&PhysicalPlan],
     ) -> Result<Expr> {
         let res = match logical_expr {
-            LogicalExpr::Column(path) => self.resolve_column(path, children)?,
+            LogicalExpr::Column(path) => self.resolve_column(path.into(), children)?,
             LogicalExpr::Integer(num) => Expr::Value(Value::Integer(num)),
             LogicalExpr::String(s) => Expr::Value(Value::String(s)),
             LogicalExpr::Boolean(val) => Expr::Value(Value::Boolean(val)),

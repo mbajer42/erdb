@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use lazy_static::lazy_static;
 
@@ -13,7 +13,7 @@ lazy_static! {
 #[derive(Debug, PartialEq)]
 pub enum LogicalExpr {
     /// A fully specified column
-    Column(Vec<String>),
+    Column(VecDeque<String>),
     Integer(i32),
     String(String),
     Boolean(bool),
@@ -37,6 +37,7 @@ pub enum TableReference {
         table_id: TableId,
         name: String,
         schema: Schema,
+        filter: Vec<LogicalExpr>,
     },
     Join {
         left: Box<TableReference>,
