@@ -1,8 +1,6 @@
-use std::collections::VecDeque;
-
 use crate::analyzer::logical_plan::{LogicalExpr, LogicalPlan, Query, TableReference};
 
-fn find_all_referenced_columns(expr: &LogicalExpr) -> Vec<VecDeque<String>> {
+fn find_all_referenced_columns(expr: &LogicalExpr) -> Vec<Vec<String>> {
     let mut columns = vec![];
     let mut to_visit = vec![expr];
     while let Some(expr) = to_visit.pop() {
@@ -22,10 +20,7 @@ fn find_all_referenced_columns(expr: &LogicalExpr) -> Vec<VecDeque<String>> {
     columns
 }
 
-fn count_referenced_columns(
-    table_reference: &TableReference,
-    columns: &[VecDeque<String>],
-) -> usize {
+fn count_referenced_columns(table_reference: &TableReference, columns: &[Vec<String>]) -> usize {
     match table_reference {
         TableReference::EmptyTable => 0,
         TableReference::BaseTable {
@@ -48,7 +43,7 @@ fn count_referenced_columns(
 
 fn all_columns_match_table_reference(
     table_reference: &TableReference,
-    columns: &[VecDeque<String>],
+    columns: &[Vec<String>],
 ) -> bool {
     count_referenced_columns(table_reference, columns) == columns.len()
 }
@@ -146,18 +141,21 @@ mod tests {
             projections: vec![],
             filter: vec![
                 LogicalExpr::Binary {
-                    left: Box::new(LogicalExpr::Column(
-                        vec!["table_a".to_owned(), "id".to_owned()].into(),
-                    )),
+                    left: Box::new(LogicalExpr::Column(vec![
+                        "table_a".to_owned(),
+                        "id".to_owned(),
+                    ])),
                     op: BinaryOperator::Eq,
-                    right: Box::new(LogicalExpr::Column(
-                        vec!["table_b".to_owned(), "table_a_id".to_owned()].into(),
-                    )),
+                    right: Box::new(LogicalExpr::Column(vec![
+                        "table_b".to_owned(),
+                        "table_a_id".to_owned(),
+                    ])),
                 },
                 LogicalExpr::Binary {
-                    left: Box::new(LogicalExpr::Column(
-                        vec!["table_a".to_owned(), "count".to_owned()].into(),
-                    )),
+                    left: Box::new(LogicalExpr::Column(vec![
+                        "table_a".to_owned(),
+                        "count".to_owned(),
+                    ])),
                     op: BinaryOperator::Greater,
                     right: Box::new(LogicalExpr::Integer(3)),
                 },
@@ -174,9 +172,10 @@ mod tests {
                     name: "table_a".to_owned(),
                     schema: Schema::new(vec![]),
                     filter: vec![LogicalExpr::Binary {
-                        left: Box::new(LogicalExpr::Column(
-                            vec!["table_a".to_owned(), "count".to_owned()].into(),
-                        )),
+                        left: Box::new(LogicalExpr::Column(vec![
+                            "table_a".to_owned(),
+                            "count".to_owned(),
+                        ])),
                         op: BinaryOperator::Greater,
                         right: Box::new(LogicalExpr::Integer(3)),
                     }],
@@ -189,13 +188,15 @@ mod tests {
                 }),
                 join_type: JoinType::Inner,
                 on: vec![LogicalExpr::Binary {
-                    left: Box::new(LogicalExpr::Column(
-                        vec!["table_a".to_owned(), "id".to_owned()].into(),
-                    )),
+                    left: Box::new(LogicalExpr::Column(vec![
+                        "table_a".to_owned(),
+                        "id".to_owned(),
+                    ])),
                     op: BinaryOperator::Eq,
-                    right: Box::new(LogicalExpr::Column(
-                        vec!["table_b".to_owned(), "table_a_id".to_owned()].into(),
-                    )),
+                    right: Box::new(LogicalExpr::Column(vec![
+                        "table_b".to_owned(),
+                        "table_a_id".to_owned(),
+                    ])),
                 }],
             },
             projections: vec![],

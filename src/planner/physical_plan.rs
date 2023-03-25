@@ -1,11 +1,52 @@
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 
+use crate::analyzer::logical_plan::AggregationFunc;
 use crate::catalog::schema::Schema;
 use crate::common::TableId;
 use crate::parser::ast::{BinaryOperator, JoinType, UnaryOperator};
 use crate::tuple::value::Value;
 use crate::tuple::Tuple;
+
+#[derive(Debug, PartialEq)]
+pub enum Aggregation {
+    Count(Expr),
+    Max(Expr),
+}
+
+impl Aggregation {
+    pub fn new(func: AggregationFunc, expr: Expr) -> Self {
+        match func {
+            AggregationFunc::Count => Self::Count(expr),
+            AggregationFunc::Max => Self::Max(expr),
+        }
+    }
+
+    /// Returns an initial value which will be used to accumulate the result
+    pub fn initial_accumulator_value(&self) -> Value {
+        match self {
+            Self::Count(_) => Value::Integer(0),
+            Self::Max(_) => Value::Null,
+        }
+    }
+
+    pub fn aggregate(&self, acc: &mut Value, tuple: &Tuple) {
+        match self {
+            Self::Count(expr) => {
+                let val = expr.evaluate(&[tuple]);
+                if !val.is_null() {
+                    *acc = Value::Integer(acc.as_i32() + 1)
+                }
+            }
+            Self::Max(expr) => {
+                let val = expr.evaluate(&[tuple]);
+                if !val.is_null() {
+                    acc.cmp_and_set_max(val);
+                }
+            }
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Expr {
@@ -127,6 +168,10 @@ pub enum PhysicalPlan {
         values: Vec<Vec<Expr>>,
         output_schema: Schema,
     },
+    Aggregate {
+        aggregations: Vec<Aggregation>,
+        child: Box<PhysicalPlan>,
+    },
     Insert {
         target: TableId,
         target_schema: Schema,
@@ -170,6 +215,10 @@ impl PhysicalPlan {
                 values: _,
                 output_schema,
             } => output_schema,
+            Self::Aggregate {
+                aggregations: _,
+                child: _,
+            } => unimplemented!(),
             Self::Insert {
                 target: _,
                 target_schema: _,
@@ -230,6 +279,17 @@ impl fmt::Display for PhysicalPlan {
                 values: _,
                 output_schema: _,
             } => write!(f, "Values Scan"),
+            Self::Aggregate {
+                aggregations: _,
+                child,
+            } => {
+                writeln!(f, "Aggregate")?;
+                let mut writer = PaddedWriter {
+                    buffer: f,
+                    use_padding: true,
+                };
+                write!(&mut writer, "{}", child)
+            }
             Self::Insert {
                 target,
                 target_schema: _,
@@ -316,11 +376,13 @@ impl fmt::Display for PhysicalPlan {
 
 #[cfg(test)]
 mod tests {
-    use super::PhysicalPlan;
+    use super::{Aggregation, PhysicalPlan};
+    use crate::analyzer::logical_plan::AggregationFunc;
     use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::parser::ast::{BinaryOperator, UnaryOperator};
     use crate::planner::physical_plan::Expr;
     use crate::tuple::value::Value;
+    use crate::tuple::Tuple;
 
     #[test]
     fn can_evaluate_arithmetic_expressions() {
@@ -390,5 +452,80 @@ mod tests {
         let formatted = format!("{}", filter);
         let expected = "Filter (id=1)\n  Sequential Scan on table with id 21";
         assert_eq!(expected, formatted);
+    }
+
+    #[test]
+    fn test_count_aggregation() {
+        let agg = Aggregation::new(
+            AggregationFunc::Count,
+            Expr::ColumnReference {
+                tuple_idx: 0,
+                col_idx: 0,
+            },
+        );
+
+        let mut acc = agg.initial_accumulator_value();
+        assert_eq!(acc.as_i32(), 0);
+
+        agg.aggregate(&mut acc, &Tuple::new(vec![Value::Boolean(true)]));
+        assert_eq!(acc.as_i32(), 1);
+
+        agg.aggregate(&mut acc, &Tuple::new(vec![Value::Boolean(false)]));
+        assert_eq!(acc.as_i32(), 2);
+
+        agg.aggregate(&mut acc, &Tuple::new(vec![Value::Null]));
+        assert_eq!(acc.as_i32(), 2);
+    }
+
+    #[test]
+    fn test_max_aggregation_of_integers() {
+        let agg = Aggregation::new(
+            AggregationFunc::Max,
+            Expr::ColumnReference {
+                tuple_idx: 0,
+                col_idx: 0,
+            },
+        );
+
+        let mut acc = agg.initial_accumulator_value();
+        assert!(acc.is_null());
+
+        agg.aggregate(&mut acc, &Tuple::new(vec![Value::Integer(3)]));
+        assert_eq!(acc.as_i32(), 3);
+
+        agg.aggregate(&mut acc, &Tuple::new(vec![Value::Integer(2)]));
+        assert_eq!(acc.as_i32(), 3);
+
+        agg.aggregate(&mut acc, &Tuple::new(vec![Value::Null]));
+        assert_eq!(acc.as_i32(), 3);
+
+        agg.aggregate(&mut acc, &Tuple::new(vec![Value::Integer(42)]));
+        assert_eq!(acc.as_i32(), 42);
+    }
+
+    #[test]
+    fn test_max_aggregation_of_text() {
+        let agg = Aggregation::new(
+            AggregationFunc::Max,
+            Expr::ColumnReference {
+                tuple_idx: 0,
+                col_idx: 0,
+            },
+        );
+
+        let mut acc = agg.initial_accumulator_value();
+        assert!(acc.is_null());
+
+        agg.aggregate(&mut acc, &Tuple::new(vec![Value::String("cd".to_owned())]));
+        assert_eq!(acc.as_str(), "cd");
+
+        agg.aggregate(&mut acc, &Tuple::new(vec![Value::String("cat".to_owned())]));
+        assert_eq!(acc.as_str(), "cd");
+
+        agg.aggregate(&mut acc, &Tuple::new(vec![Value::Null]));
+        assert_eq!(acc.as_str(), "cd");
+
+        agg.aggregate(&mut acc, &Tuple::new(vec![Value::String("rm".to_owned())]));
+        assert_eq!(acc.as_str(), "rm");
     }
 }

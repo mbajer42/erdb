@@ -442,6 +442,14 @@ impl Parser {
                     let _dot = self.next_token();
                     let col = self.parse_identifier()?;
                     Ok(ExprNode::QualifiedIdentifier(id, col))
+                } else if self.peek_token() == &Token::LeftParen {
+                    let _left_paren = self.next_token();
+                    let expr = self.parse_expression()?;
+                    self.expect(Token::RightParen)?;
+                    Ok(ExprNode::FunctionCall {
+                        name: id,
+                        expr: Box::new(expr),
+                    })
                 } else {
                     Ok(ExprNode::Identifier(id))
                 }
@@ -696,7 +704,7 @@ pub fn parse_sql(sql: &str) -> Result<(bool, Statement)> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
 
     use super::ast::{
         BinaryOperator, ColumnDefinition, DataType, ExprNode, Projection, Statement, TableNode,
@@ -1031,6 +1039,39 @@ mod tests {
                 right: Box::new(ExprNode::Number("42".to_owned())),
             }),
         };
+
+        assert_eq!(statement, expected_statement);
+    }
+
+    #[test]
+    fn can_parse_function_calls() {
+        let sql = "
+            select foo(col), 2 + bar(col2) as baz
+        ";
+
+        let (_, statement) = parse_sql(sql).unwrap();
+        let expected_statement = Statement::Select(SelectStatement {
+            values: None,
+            projections: vec![
+                Projection::UnnamedExpr(ExprNode::FunctionCall {
+                    name: "foo".to_owned(),
+                    expr: Box::new(ExprNode::Identifier("col".to_owned())),
+                }),
+                Projection::NamedExpr {
+                    expr: ExprNode::Binary {
+                        left: Box::new(ExprNode::Number("2".to_owned())),
+                        op: BinaryOperator::Plus,
+                        right: Box::new(ExprNode::FunctionCall {
+                            name: "bar".to_owned(),
+                            expr: Box::new(ExprNode::Identifier("col2".to_owned())),
+                        }),
+                    },
+                    alias: "baz".to_owned(),
+                },
+            ],
+            from: VecDeque::new(),
+            filter: None,
+        });
 
         assert_eq!(statement, expected_statement);
     }
