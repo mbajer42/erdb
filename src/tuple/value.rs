@@ -77,6 +77,33 @@ impl Value {
         }
     }
 
+    /// Compares itself with another value and assigns the greater of these to itself.
+    /// Assumes that the other value is of same type.
+    /// Currently only implemented for integer and text
+    pub fn cmp_and_set_max(&mut self, other: Value) {
+        if other.is_null() {
+            return;
+        }
+
+        match (self, other) {
+            (Value::Integer(val), Value::Integer(other)) => {
+                if *val < other {
+                    *val = other;
+                }
+            }
+            (Value::String(val), Value::String(other)) => {
+                if *val < other {
+                    *val = other;
+                }
+            }
+            (_, Value::Null) => (),
+            (this @ Value::Null, other) => {
+                *this = other;
+            }
+            _ => unreachable!(),
+        }
+    }
+
     pub fn as_str(&self) -> &str {
         match &self {
             Value::String(val) => val,

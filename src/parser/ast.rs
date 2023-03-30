@@ -91,6 +91,11 @@ pub enum ExprNode {
     },
     IsNull(Box<ExprNode>),
     IsNotNull(Box<ExprNode>),
+    /// a function call, e.g. min(col_a)
+    FunctionCall {
+        name: String,
+        expr: Box<ExprNode>,
+    },
     Null,
 }
 
@@ -103,11 +108,12 @@ impl Display for ExprNode {
             Self::String(s) => write!(f, "'{}'", s),
             Self::Boolean(b) => write!(f, "{}", b),
             Self::Grouping(expr) => write!(f, "({})", expr),
-            ExprNode::Binary { left, op, right } => write!(f, "{} {} {}", left, op, right),
-            ExprNode::Unary { op, expr } => write!(f, "{}{}", op, expr),
-            ExprNode::IsNull(expr) => write!(f, "{} IS NULL", expr),
-            ExprNode::IsNotNull(expr) => write!(f, "{} IS NOT NULL", expr),
-            ExprNode::Null => write!(f, "NULL"),
+            Self::Binary { left, op, right } => write!(f, "{} {} {}", left, op, right),
+            Self::Unary { op, expr } => write!(f, "{}{}", op, expr),
+            Self::IsNull(expr) => write!(f, "{} IS NULL", expr),
+            Self::IsNotNull(expr) => write!(f, "{} IS NOT NULL", expr),
+            Self::FunctionCall { name, expr } => write!(f, "{}({})", name, expr),
+            Self::Null => write!(f, "NULL"),
         }
     }
 }

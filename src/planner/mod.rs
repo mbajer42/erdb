@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::{Error, Result};
 
-use self::physical_plan::{Expr, PhysicalPlan};
+use self::physical_plan::{Aggregation, Expr, PhysicalPlan};
 use crate::analyzer::logical_plan::{
     LogicalExpr, LogicalPlan, Query, TableReference, EMPTY_SCHEMA,
 };
@@ -120,7 +120,21 @@ impl Planner {
         } else {
             let mut plan = self.plan_table_reference(from)?;
             plan = self.plan_filter(filter, plan)?;
-            plan = self.plan_projections(projections, output_schema, plan)?;
+
+            if projections.iter().any(|expr| expr.has_aggregation()) {
+                let (aggregations, projections) = self.plan_aggregations(projections, &plan)?;
+                plan = PhysicalPlan::Aggregate {
+                    aggregations,
+                    child: Box::new(plan),
+                };
+                plan = PhysicalPlan::Projection {
+                    projections,
+                    child: Box::new(plan),
+                    output_schema,
+                };
+            } else {
+                plan = self.plan_projections(projections, output_schema, plan)?;
+            }
             Ok(plan)
         }
     }
@@ -212,13 +226,79 @@ impl Planner {
             .collect()
     }
 
+    /// Transforms the expressions (of which at least one contains an aggregation) and returns
+    /// the aggregations and their projections
+    fn plan_aggregations(
+        &self,
+        exprs: Vec<LogicalExpr>,
+        child: &PhysicalPlan,
+    ) -> Result<(Vec<Aggregation>, Vec<Expr>)> {
+        let mut aggregations = vec![];
+
+        let planned_expressions = exprs
+            .into_iter()
+            .map(|expr| self.plan_aggregation(expr, child, &mut aggregations))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok((aggregations, planned_expressions))
+    }
+
+    /// Transforms a logical to a physical expression. Any encountered aggregations is pushed to the aggregations vec
+    /// and replaced by a column reference, so that the aggregation result can be referenced by parent physical plans
+    fn plan_aggregation(
+        &self,
+        expr: LogicalExpr,
+        child: &PhysicalPlan,
+        aggregations: &mut Vec<Aggregation>,
+    ) -> Result<Expr> {
+        let res = match expr {
+            LogicalExpr::Column(_) => {
+                unreachable!("Mixing column references and aggregations is not possible")
+            }
+            LogicalExpr::Integer(num) => Expr::Value(Value::Integer(num)),
+            LogicalExpr::String(s) => Expr::Value(Value::String(s)),
+            LogicalExpr::Boolean(val) => Expr::Value(Value::Boolean(val)),
+            LogicalExpr::Null => Expr::Value(Value::Null),
+            LogicalExpr::Unary { op, expr } => Expr::Unary {
+                op,
+                expr: Box::new(self.plan_aggregation(*expr, child, aggregations)?),
+            },
+            LogicalExpr::Binary { left, op, right } => Expr::Binary {
+                left: Box::new(self.plan_aggregation(*left, child, aggregations)?),
+                op,
+                right: Box::new(self.plan_aggregation(*right, child, aggregations)?),
+            },
+            LogicalExpr::IsNull(expr) => Expr::IsNull(Box::new(self.plan_aggregation(
+                *expr,
+                child,
+                aggregations,
+            )?)),
+            LogicalExpr::IsNotNull(expr) => Expr::IsNotNull(Box::new(self.plan_aggregation(
+                *expr,
+                child,
+                aggregations,
+            )?)),
+            LogicalExpr::Aggregation(agg_func, expr) => {
+                aggregations.push(Aggregation::new(
+                    agg_func,
+                    self.plan_expression(*expr, &[child])?,
+                ));
+                Expr::ColumnReference {
+                    tuple_idx: 0,
+                    col_idx: aggregations.len() - 1,
+                }
+            }
+        };
+        Ok(res)
+    }
+
     fn plan_expression(
         &self,
         logical_expr: LogicalExpr,
         children: &[&PhysicalPlan],
     ) -> Result<Expr> {
         let res = match logical_expr {
-            LogicalExpr::Column(path) => self.resolve_column(path.into(), children)?,
+            LogicalExpr::Column(path) => self.resolve_column(path, children)?,
             LogicalExpr::Integer(num) => Expr::Value(Value::Integer(num)),
             LogicalExpr::String(s) => Expr::Value(Value::String(s)),
             LogicalExpr::Boolean(val) => Expr::Value(Value::Boolean(val)),
@@ -238,6 +318,7 @@ impl Planner {
             LogicalExpr::IsNotNull(expr) => {
                 Expr::IsNotNull(Box::new(self.plan_expression(*expr, children)?))
             }
+            LogicalExpr::Aggregation(_, _) => unreachable!(),
         };
         Ok(res)
     }

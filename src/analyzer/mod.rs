@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::str::FromStr;
 
 use anyhow::{Error, Result};
 
@@ -13,7 +14,7 @@ pub mod logical_plan;
 
 use logical_plan::LogicalPlan;
 
-use self::logical_plan::{LogicalExpr, TableReference};
+use self::logical_plan::{AggregationFunc, LogicalExpr, TableReference};
 
 /// Splits an expression into a conjunctive normal form
 /// i.e. a AND b AND c will be split into vec![a, b, c]
@@ -66,7 +67,7 @@ impl<'a> Analyzer<'a> {
                 let (col_expr, col_def) =
                     Self::analyze_expression(ExprNode::Identifier(column), &table)?;
                 let column: Vec<String> = match col_expr {
-                    LogicalExpr::Column(col) => col.into(),
+                    LogicalExpr::Column(col) => col,
                     _ => unreachable!(),
                 };
                 let (value_expr, value_def) = Self::analyze_expression(expression, &table)?;
@@ -199,7 +200,26 @@ impl<'a> Analyzer<'a> {
         let mut projections = vec![];
         let mut output_columns = vec![];
 
+        let mut has_aggregations = false;
+        let mut referenced_column = None;
         for (col, (expr, mut col_def)) in projections_with_specification.into_iter().enumerate() {
+            has_aggregations |= expr.has_aggregation();
+            if referenced_column.is_none() {
+                referenced_column = expr.find_any_referenced_column();
+            }
+
+            match &referenced_column {
+                Some(column) if has_aggregations => {
+                    // don't allow column references if projections contains any aggregations
+                    // disallow e.g. SELECT count(col_a), col_a from table
+                    return Err(Error::msg(format!(
+                        "column '{}' must be used in an aggregation",
+                        column
+                    )));
+                }
+                _ => (),
+            }
+
             projections.push(expr);
             col_def.column_offset = col as u8;
             output_columns.push(col_def);
@@ -551,6 +571,22 @@ impl<'a> Analyzer<'a> {
                     ColumnDefinition::with_type_id(TypeId::Boolean),
                 ))
             }
+            ExprNode::FunctionCall { name, expr } => {
+                if let Ok(agg) = AggregationFunc::from_str(&name) {
+                    let (expr, col_def) = Self::analyze_expression(*expr, scope)?;
+                    if expr.has_aggregation() {
+                        return Err(Error::msg("Aggregations cannot be nested"));
+                    }
+
+                    agg.validate_aggregation_type(col_def.type_id)?;
+                    let result_type = agg.aggregation_result_type(col_def.type_id);
+
+                    let agg_expr = LogicalExpr::Aggregation(agg, Box::new(expr));
+                    Ok((agg_expr, ColumnDefinition::with_type_id(result_type)))
+                } else {
+                    Err(Error::msg(format!("Cannot find function {}.", name)))
+                }
+            }
             ExprNode::Null => Ok((
                 LogicalExpr::Null,
                 ColumnDefinition::with_type_id(TypeId::Unknown),
@@ -577,9 +613,7 @@ impl<'a> Analyzer<'a> {
                 }
                 let column = schema.find_column(column).map(|col_def| {
                     (
-                        LogicalExpr::Column(
-                            vec![name.clone(), col_def.column_name().to_owned()].into(),
-                        ),
+                        LogicalExpr::Column(vec![name.clone(), col_def.column_name().to_owned()]),
                         ColumnDefinition::new(
                             col_def.type_id(),
                             String::new(),
@@ -633,9 +667,10 @@ impl<'a> Analyzer<'a> {
                     .columns()
                     .iter()
                     .map(|col_def| {
-                        let expr = LogicalExpr::Column(
-                            vec![table_name.clone(), col_def.column_name().to_owned()].into(),
-                        );
+                        let expr = LogicalExpr::Column(vec![
+                            table_name.clone(),
+                            col_def.column_name().to_owned(),
+                        ]);
                         let name = format!("{}.{}", table_name, col_def.column_name());
                         let new_col_def = ColumnDefinition::new(
                             col_def.type_id(),
@@ -667,11 +702,12 @@ impl<'a> Analyzer<'a> {
 mod tests {
     use std::sync::Arc;
 
-    use tempfile::tempdir;
+    use anyhow::Result;
+    use tempfile::{tempdir, TempDir};
 
     use super::logical_plan::{LogicalExpr, LogicalPlan, TableReference};
     use super::Analyzer;
-    use crate::analyzer::logical_plan::Query;
+    use crate::analyzer::logical_plan::{AggregationFunc, Query};
     use crate::buffer::buffer_manager::BufferManager;
     use crate::catalog::schema::{ColumnDefinition, Schema, TypeId};
     use crate::catalog::Catalog;
@@ -680,35 +716,68 @@ mod tests {
     use crate::parser::parse_sql;
     use crate::storage::file_manager::FileManager;
 
+    struct AnalyzerTestSuite {
+        #[allow(dead_code)]
+        data_dir: TempDir,
+        transaction_manager: TransactionManager,
+        catalog: Catalog,
+    }
+
+    impl AnalyzerTestSuite {
+        fn new() -> Result<Self> {
+            let data_dir = tempdir()?;
+            let file_manager = FileManager::new(data_dir.path())?;
+            let buffer_manager = Arc::new(BufferManager::new(file_manager, 1));
+            let transaction_manager = TransactionManager::new(Arc::clone(&buffer_manager), true)?;
+
+            let bootstrap_transaction = transaction_manager.bootstrap();
+            let catalog =
+                Catalog::new(Arc::clone(&buffer_manager), true, &bootstrap_transaction).unwrap();
+
+            bootstrap_transaction.commit()?;
+
+            Ok(Self {
+                data_dir,
+                transaction_manager,
+                catalog,
+            })
+        }
+
+        fn create_table(&self, table_name: &str, columns: Vec<ColumnDefinition>) -> Result<()> {
+            let transaction = self.transaction_manager.start_transaction(None)?;
+            self.catalog
+                .create_table(table_name, columns, &transaction)?;
+            transaction.commit()?;
+
+            Ok(())
+        }
+
+        fn analyze_query(&self, sql: &str) -> Result<LogicalPlan> {
+            let (_, statement) = parse_sql(sql)?;
+            let analyzer = Analyzer::new(&self.catalog);
+            analyzer.analyze(statement)
+        }
+    }
+
     #[test]
     fn can_bind_wildcard_select() {
-        let data_dir = tempdir().unwrap();
-        let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = Arc::new(BufferManager::new(file_manager, 1));
-        let transaction_manager =
-            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
-        let bootstrap_transaction = transaction_manager.bootstrap();
-
-        let catalog =
-            Catalog::new(Arc::clone(&buffer_manager), true, &bootstrap_transaction).unwrap();
         let columns = vec![
             ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
             ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
         ];
-        let transaction = transaction_manager.start_transaction(None).unwrap();
-        catalog
-            .create_table("accounts", columns, &transaction)
+        let analyzer_test_suite = AnalyzerTestSuite::new().unwrap();
+        analyzer_test_suite
+            .create_table("accounts", columns)
             .unwrap();
-        transaction.commit().unwrap();
-        let table_id = catalog.get_table_id("accounts").unwrap();
-        let schema = catalog.get_schema("accounts").unwrap();
-
+        let table_id = analyzer_test_suite
+            .catalog
+            .get_table_id("accounts")
+            .unwrap();
+        let schema = analyzer_test_suite.catalog.get_schema("accounts").unwrap();
         let sql = "
             select * from accounts
         ";
-        let (_, statement) = parse_sql(sql).unwrap();
-        let analyzer = Analyzer::new(&catalog);
-        let query = analyzer.analyze(statement).unwrap();
+        let query = analyzer_test_suite.analyze_query(sql).unwrap();
 
         let expected_query = LogicalPlan::Select(Query {
             from: TableReference::BaseTable {
@@ -718,8 +787,8 @@ mod tests {
                 filter: vec![],
             },
             projections: vec![
-                LogicalExpr::Column(vec!["accounts".to_owned(), "id".to_owned()].into()),
-                LogicalExpr::Column(vec!["accounts".to_owned(), "name".to_owned()].into()),
+                LogicalExpr::Column(vec!["accounts".to_owned(), "id".to_owned()]),
+                LogicalExpr::Column(vec!["accounts".to_owned(), "name".to_owned()]),
             ],
             filter: vec![],
             output_schema: Schema::new(vec![
@@ -734,33 +803,24 @@ mod tests {
 
     #[test]
     fn can_bind_qualified_wildcard_select() {
-        let data_dir = tempdir().unwrap();
-        let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = Arc::new(BufferManager::new(file_manager, 1));
-        let transaction_manager =
-            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
-        let bootstrap_transaction = transaction_manager.bootstrap();
-
-        let catalog =
-            Catalog::new(Arc::clone(&buffer_manager), true, &bootstrap_transaction).unwrap();
         let columns = vec![
             ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
             ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
         ];
-        let transaction = transaction_manager.start_transaction(None).unwrap();
-        catalog
-            .create_table("accounts", columns, &transaction)
+        let analyzer_test_suite = AnalyzerTestSuite::new().unwrap();
+        analyzer_test_suite
+            .create_table("accounts", columns)
             .unwrap();
-        transaction.commit().unwrap();
-        let table_id = catalog.get_table_id("accounts").unwrap();
-        let schema = catalog.get_schema("accounts").unwrap();
+        let table_id = analyzer_test_suite
+            .catalog
+            .get_table_id("accounts")
+            .unwrap();
+        let schema = analyzer_test_suite.catalog.get_schema("accounts").unwrap();
 
         let sql = "
             select acc.* from accounts acc
         ";
-        let (_, statement) = parse_sql(sql).unwrap();
-        let analyzer = Analyzer::new(&catalog);
-        let query = analyzer.analyze(statement).unwrap();
+        let query = analyzer_test_suite.analyze_query(sql).unwrap();
 
         let expected_query = LogicalPlan::Select(Query {
             from: TableReference::BaseTable {
@@ -770,8 +830,8 @@ mod tests {
                 filter: vec![],
             },
             projections: vec![
-                LogicalExpr::Column(vec!["acc".to_owned(), "id".to_owned()].into()),
-                LogicalExpr::Column(vec!["acc".to_owned(), "name".to_owned()].into()),
+                LogicalExpr::Column(vec!["acc".to_owned(), "id".to_owned()]),
+                LogicalExpr::Column(vec!["acc".to_owned(), "name".to_owned()]),
             ],
             filter: vec![],
             output_schema: Schema::new(vec![
@@ -786,35 +846,24 @@ mod tests {
 
     #[test]
     fn can_analyze_arithmetic_expressions() {
-        let data_dir = tempdir().unwrap();
-        let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = Arc::new(BufferManager::new(file_manager, 1));
-        let transaction_manager =
-            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
-        let bootstrap_transaction = transaction_manager.bootstrap();
-
-        let catalog =
-            Catalog::new(Arc::clone(&buffer_manager), true, &bootstrap_transaction).unwrap();
-        let columns = vec![ColumnDefinition::new(
-            TypeId::Integer,
-            "id".to_owned(),
-            0,
-            true,
-        )];
-        let transaction = transaction_manager.start_transaction(None).unwrap();
-        catalog
-            .create_table("accounts", columns, &transaction)
+        let columns = vec![
+            ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
+            ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
+        ];
+        let analyzer_test_suite = AnalyzerTestSuite::new().unwrap();
+        analyzer_test_suite
+            .create_table("accounts", columns)
             .unwrap();
-        transaction.commit().unwrap();
-        let table_id = catalog.get_table_id("accounts").unwrap();
-        let schema = catalog.get_schema("accounts").unwrap();
+        let table_id = analyzer_test_suite
+            .catalog
+            .get_table_id("accounts")
+            .unwrap();
+        let schema = analyzer_test_suite.catalog.get_schema("accounts").unwrap();
 
         let sql = "
             select -id as negative_id, id+1, 2 * (3+5) from accounts
         ";
-        let (_, statement) = parse_sql(sql).unwrap();
-        let analyzer = Analyzer::new(&catalog);
-        let query = analyzer.analyze(statement).unwrap();
+        let query = analyzer_test_suite.analyze_query(sql).unwrap();
 
         let expected_query = LogicalPlan::Select(Query {
             from: TableReference::BaseTable {
@@ -826,14 +875,16 @@ mod tests {
             projections: vec![
                 LogicalExpr::Unary {
                     op: UnaryOperator::Minus,
-                    expr: Box::new(LogicalExpr::Column(
-                        vec!["accounts".to_owned(), "id".to_owned()].into(),
-                    )),
+                    expr: Box::new(LogicalExpr::Column(vec![
+                        "accounts".to_owned(),
+                        "id".to_owned(),
+                    ])),
                 },
                 LogicalExpr::Binary {
-                    left: Box::new(LogicalExpr::Column(
-                        vec!["accounts".to_owned(), "id".to_owned()].into(),
-                    )),
+                    left: Box::new(LogicalExpr::Column(vec![
+                        "accounts".to_owned(),
+                        "id".to_owned(),
+                    ])),
                     op: BinaryOperator::Plus,
                     right: Box::new(LogicalExpr::Integer(1)),
                 },
@@ -861,22 +912,12 @@ mod tests {
 
     #[test]
     fn can_analyze_values() {
-        let data_dir = tempdir().unwrap();
-        let file_manager = FileManager::new(data_dir.path()).unwrap();
-        let buffer_manager = Arc::new(BufferManager::new(file_manager, 1));
-        let transaction_manager =
-            TransactionManager::new(Arc::clone(&buffer_manager), true).unwrap();
-        let bootstrap_transaction = transaction_manager.bootstrap();
+        let analyzer_test_suite = AnalyzerTestSuite::new().unwrap();
 
         let sql = "
             values (1, NULL, 'foo', true), (2, 'bar', NULL, false);
         ";
-        let (_, statement) = parse_sql(sql).unwrap();
-
-        let catalog =
-            Catalog::new(Arc::clone(&buffer_manager), true, &bootstrap_transaction).unwrap();
-        let analyzer = Analyzer::new(&catalog);
-        let query = analyzer.analyze(statement).unwrap();
+        let query = analyzer_test_suite.analyze_query(sql).unwrap();
         let expected_output_schema = Schema::new(vec![
             ColumnDefinition::new(TypeId::Integer, "col_0".to_owned(), 0, true),
             ColumnDefinition::new(TypeId::Text, "col_1".to_owned(), 1, false),
@@ -906,5 +947,85 @@ mod tests {
         });
 
         assert_eq!(query, expected_query);
+    }
+
+    #[test]
+    fn can_analyze_count_aggregations() {
+        let columns = vec![
+            ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
+            ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
+        ];
+        let analyzer_test_suite = AnalyzerTestSuite::new().unwrap();
+        analyzer_test_suite
+            .create_table("accounts", columns)
+            .unwrap();
+        let table_id = analyzer_test_suite
+            .catalog
+            .get_table_id("accounts")
+            .unwrap();
+        let schema = analyzer_test_suite.catalog.get_schema("accounts").unwrap();
+        let sql = "
+            select count(name), 2 * count(name) as double_count from accounts
+        ";
+        let query = analyzer_test_suite.analyze_query(sql).unwrap();
+
+        let expected_query = LogicalPlan::Select(Query {
+            from: TableReference::BaseTable {
+                table_id,
+                name: "accounts".to_owned(),
+                schema,
+                filter: vec![],
+            },
+            projections: vec![
+                LogicalExpr::Aggregation(
+                    AggregationFunc::Count,
+                    Box::new(LogicalExpr::Column(vec![
+                        "accounts".to_owned(),
+                        "name".to_owned(),
+                    ])),
+                ),
+                LogicalExpr::Binary {
+                    left: Box::new(LogicalExpr::Integer(2)),
+                    op: BinaryOperator::Multiply,
+                    right: Box::new(LogicalExpr::Aggregation(
+                        AggregationFunc::Count,
+                        Box::new(LogicalExpr::Column(vec![
+                            "accounts".to_owned(),
+                            "name".to_owned(),
+                        ])),
+                    )),
+                },
+            ],
+            filter: vec![],
+            output_schema: Schema::new(vec![
+                ColumnDefinition::new(TypeId::Integer, "count(name)".to_owned(), 0, true),
+                ColumnDefinition::new(TypeId::Integer, "double_count".to_owned(), 1, true),
+            ]),
+            values: vec![],
+        });
+
+        assert_eq!(query, expected_query);
+    }
+
+    #[test]
+    fn mixing_aggregations_and_column_references_is_disallowed() {
+        let columns = vec![
+            ColumnDefinition::new(TypeId::Integer, "id".to_owned(), 0, true),
+            ColumnDefinition::new(TypeId::Text, "name".to_owned(), 1, true),
+        ];
+        let analyzer_test_suite = AnalyzerTestSuite::new().unwrap();
+        analyzer_test_suite
+            .create_table("accounts", columns)
+            .unwrap();
+        let sql = "
+            select id, count(name) as double_count from accounts
+        ";
+
+        let result = analyzer_test_suite.analyze_query(sql);
+        assert!(result.is_err());
+        assert_eq!(
+            &result.err().unwrap().root_cause().to_string(),
+            "column 'accounts.id' must be used in an aggregation"
+        );
     }
 }

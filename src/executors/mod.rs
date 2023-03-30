@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
+use self::aggregate_executor::AggregateExecutor;
 use self::delete_executor::DeleteExecutor;
 use self::filter_executor::FilterExecutor;
 use self::insert_executor::InsertExecutor;
@@ -19,6 +20,7 @@ use crate::planner::physical_plan::PhysicalPlan;
 use crate::storage::heap::table::Table;
 use crate::tuple::Tuple;
 
+mod aggregate_executor;
 mod delete_executor;
 mod filter_executor;
 mod insert_executor;
@@ -78,6 +80,10 @@ impl<'a> ExecutorFactory<'a> {
                 self.insert_tables(right);
                 return;
             }
+            PhysicalPlan::Aggregate {
+                aggregations: _,
+                child,
+            } => return self.insert_tables(child),
             PhysicalPlan::Insert {
                 target,
                 target_schema,
@@ -130,6 +136,13 @@ impl<'a> ExecutorFactory<'a> {
                     on,
                     output_schema,
                 )))
+            }
+            PhysicalPlan::Aggregate {
+                aggregations,
+                child,
+            } => {
+                let child = self.create_executor_internal(*child)?;
+                Ok(Box::new(AggregateExecutor::new(child, aggregations)))
             }
             PhysicalPlan::Projection {
                 projections,
