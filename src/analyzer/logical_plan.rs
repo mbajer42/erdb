@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::str::FromStr;
 
 use anyhow::{Error, Result};
 use lazy_static::lazy_static;
@@ -43,18 +42,15 @@ impl AggregationFunc {
             Self::Max => child_type,
         }
     }
-}
 
-impl FromStr for AggregationFunc {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    /// Returns an aggregation function if there exists one with this name, else None
+    pub fn is_aggregation_func(s: &str) -> Option<Self> {
         let res = match s {
             "count" => Self::Count,
             "max" => Self::Max,
-            _ => return Err(()),
+            _ => return None,
         };
-        Ok(res)
+        Some(res)
     }
 }
 

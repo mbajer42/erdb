@@ -1,5 +1,4 @@
 use std::collections::{HashMap, VecDeque};
-use std::str::FromStr;
 
 use anyhow::{Error, Result};
 
@@ -572,7 +571,7 @@ impl<'a> Analyzer<'a> {
                 ))
             }
             ExprNode::FunctionCall { name, expr } => {
-                if let Ok(agg) = AggregationFunc::from_str(&name) {
+                if let Some(agg) = AggregationFunc::is_aggregation_func(&name) {
                     let (expr, col_def) = Self::analyze_expression(*expr, scope)?;
                     if expr.has_aggregation() {
                         return Err(Error::msg("Aggregations cannot be nested"));

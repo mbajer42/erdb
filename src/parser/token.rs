@@ -1,5 +1,5 @@
 use std::iter::{Enumerate, Peekable};
-use std::str::{Chars, FromStr};
+use std::str::Chars;
 
 use anyhow::{Error, Result};
 
@@ -46,10 +46,9 @@ pub enum Keyword {
     Where,
 }
 
-impl FromStr for Keyword {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+impl Keyword {
+    /// Returns None if string is not a keyword, else the keyword
+    pub fn is_keyword(s: &str) -> Option<Self> {
         let res = match s {
             "and" => Self::And,
             "as" => Self::As,
@@ -90,9 +89,9 @@ impl FromStr for Keyword {
             "update" => Self::Update,
             "values" => Self::Values,
             "where" => Self::Where,
-            _ => return Err(()),
+            _ => return None,
         };
-        Ok(res)
+        Some(res)
     }
 }
 
@@ -246,7 +245,7 @@ impl<'a> Tokenizer<'a> {
                 '\'' => Token::QuotedString(self.quoted_string(pos + 1)?),
                 'a'..='z' | 'A'..='Z' | '_' => {
                     let word = self.word(pos);
-                    if let Ok(keyword) = Keyword::from_str(&word) {
+                    if let Some(keyword) = Keyword::is_keyword(&word) {
                         Token::Keyword(keyword)
                     } else {
                         Token::Identifier(word)
